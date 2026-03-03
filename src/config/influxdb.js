@@ -1,4 +1,4 @@
-const { InfluxDB } = require('@influxdata/influxdb-client');
+const { InfluxDB, HttpError } = require('@influxdata/influxdb-client');
 const config = require('./index');
 
 /*
@@ -43,23 +43,43 @@ function getQueryApi() {
 }
 
 /**
- * Verify InfluxDB is reachable by running a simple health check.
- * Non-fatal in dev — logs a warning and continues.
+ * Verify InfluxDB is reachable.
+ *
+ * Uses the client library's own API (a simple Flux query) instead
+ * of the /health endpoint, because InfluxDB Cloud does NOT expose
+ * /health publicly — it returns an HTML login page.
  */
 async function pingInfluxDB() {
     try {
-        // InfluxDB 2.x health endpoint
-        const fetch = globalThis.fetch || require('node:http').get;
-        const res = await globalThis.fetch(`${config.influx.url}/health`);
-        const body = await res.json();
+        const queryApi = getQueryApi();
+        // Simplest possible query — just returns 1 row to confirm auth + connectivity
+        const query = `from(bucket: "${config.influx.bucket}") |> range(start: -1s) |> limit(n: 1)`;
 
-        if (body.status === 'pass') {
-            console.log('[InfluxDB] ✅ Connected successfully →', config.influx.url);
-        } else {
-            console.warn('[InfluxDB] ⚠️  Health check returned:', body.status);
-        }
+        await new Promise((resolve, reject) => {
+            queryApi.queryRows(query, {
+                next() { /* row received — connection is alive */ },
+                error(err) {
+                    // "no results" is fine — it means the connection works but bucket is empty
+                    if (err.message && err.message.includes('no results')) {
+                        resolve();
+                    } else {
+                        reject(err);
+                    }
+                },
+                complete() { resolve(); },
+            });
+        });
+
+        console.log('[InfluxDB] ✅ Connected successfully →', config.influx.url);
     } catch (err) {
-        console.warn('[InfluxDB] ⚠️  Could not reach InfluxDB — skipping ping:', err.message);
+        // If we get a 401/403, token is wrong. Otherwise just warn.
+        if (err instanceof HttpError && (err.statusCode === 401 || err.statusCode === 403)) {
+            console.error('[InfluxDB] ❌ Authentication failed — check INFLUXDB_TOKEN and INFLUXDB_ORG in .env');
+        } else {
+            console.warn('[InfluxDB] ⚠️ Could not verify InfluxDB connection:', err.message || err);
+            console.warn('[InfluxDB]    Data writes/reads may still work. Continuing...');
+        }
+
         if (config.server.env === 'production') {
             process.exit(1);
         }
