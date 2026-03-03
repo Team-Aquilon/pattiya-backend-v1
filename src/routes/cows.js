@@ -1,0 +1,64 @@
+const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const router = express.Router();
+const cowController = require('../controllers/cowController');
+const { auth } = require('../middleware/auth');
+
+// ─── Multer config for cow image uploads ───────────────────
+
+const storage = multer.diskStorage({
+    destination: (_req, _file, cb) => {
+        const uploadDir = path.join(__dirname, '../../uploads/cows');
+        // Ensure directory exists
+        const fs = require('fs');
+        fs.mkdirSync(uploadDir, { recursive: true });
+        cb(null, uploadDir);
+    },
+    filename: (_req, file, cb) => {
+        const ext = path.extname(file.originalname);
+        cb(null, `${Date.now()}-${Math.round(Math.random() * 1e6)}${ext}`);
+    },
+});
+
+const upload = multer({
+    storage,
+    limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
+    fileFilter: (_req, file, cb) => {
+        const allowed = /jpeg|jpg|png|webp/;
+        const ext = allowed.test(path.extname(file.originalname).toLowerCase());
+        const mime = allowed.test(file.mimetype);
+        cb(ext && mime ? null : new Error('Only image files allowed'), ext && mime);
+    },
+});
+
+// All cow routes require user authentication
+router.use(auth);
+
+// Dashboard & inventory
+router.get('/dashboard', cowController.dashboard);
+router.get('/locations', cowController.getLocations);
+router.get('/', cowController.listCows);
+
+// Registration
+router.post('/register', cowController.registerCow);
+
+// Single cow
+router.get('/:cow_id', cowController.getCow);
+router.put('/:cow_id', cowController.updateCow);
+router.get('/:cow_id/history', cowController.getCowHistory);
+router.post('/:cow_id/image', upload.single('image'), cowController.uploadImage);
+router.post('/:cow_id/unpair', cowController.unpairCow);
+
+// Health events
+router.post('/:cow_id/events', cowController.addHealthEvent);
+router.get('/:cow_id/events', cowController.getHealthEvents);
+
+// Methane monitoring
+router.get('/:cow_id/methane/history', cowController.getMethaneHistory);
+
+// Milk tracking
+router.post('/:cow_id/milk', cowController.addMilkRecord);
+router.get('/:cow_id/milk/stats', cowController.getMilkStats);
+
+module.exports = router;
