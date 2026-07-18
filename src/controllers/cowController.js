@@ -1,8 +1,10 @@
+const mongoose = require('mongoose');
 const Cow = require('../models/Cow');
 const HealthEvent = require('../models/HealthEvent');
 const MilkRecord = require('../models/MilkRecord');
 const Farm = require('../models/Farm');
 const OestrusAlert = require('../models/OestrusAlert');
+const Notification = require('../models/Notification');
 const { getQueryApi } = require('../config/influxdb');
 const influxService = require('../services/influxService');
 const { publishAddMAC, publishRemoveMAC } = require('../services/mqttHandler');
@@ -614,12 +616,74 @@ exports.getOestrusAlerts = asyncHandler(async (req, res) => {
     });
 });
 
+async function findFarmOestrusAlert(req, res) {
+    const { alert_id: alertId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(alertId)) {
+        res.status(404).json({ status: 'error', message: 'Oestrus alert not found' });
+        return null;
+    }
+
+    const alert = await OestrusAlert.findOne({ _id: alertId, farm_id: req.farmId });
+    if (!alert) {
+        res.status(404).json({ status: 'error', message: 'Oestrus alert not found' });
+        return null;
+    }
+
+    return alert;
+}
+
+async function syncHeatNotificationsForOestrusAlert(alert, updates) {
+    if (!alert.cow_id) return;
+
+    await Notification.updateMany(
+        {
+            farm_id: alert.farm_id,
+            cow_id: alert.cow_id,
+            type: 'HEAT_DETECTED',
+            resolved_at: null,
+            dismissed_at: null,
+        },
+        {
+            $set: {
+                ...updates,
+                is_read: true,
+                read_at: new Date(),
+            },
+        }
+    );
+}
+
+exports.resolveOestrusAlert = asyncHandler(async (req, res) => {
+    const alert = await findFarmOestrusAlert(req, res);
+    if (!alert) return;
+
+    const now = new Date();
+    alert.resolved_at = alert.resolved_at || now;
+    await alert.save();
+    await syncHeatNotificationsForOestrusAlert(alert, { resolved_at: now });
+
+    res.json({ status: 'success', data: alert });
+});
+
+exports.dismissOestrusAlert = asyncHandler(async (req, res) => {
+    const alert = await findFarmOestrusAlert(req, res);
+    if (!alert) return;
+
+    const now = new Date();
+    alert.dismissed_at = alert.dismissed_at || now;
+    await alert.save();
+    await syncHeatNotificationsForOestrusAlert(alert, { dismissed_at: now });
+
+    res.json({ status: 'success', data: alert });
+});
 exports.getActiveOestrusAlerts = asyncHandler(async (req, res) => {
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
     const alerts = await OestrusAlert.find({
         farm_id: req.farmId,
         decision: { $ne: 'NORMAL' },
+        resolved_at: null,
+        dismissed_at: null,
         createdAt: { $gte: twentyFourHoursAgo }
     })
         .sort({ createdAt: -1 })
@@ -646,6 +710,8 @@ exports.getActiveOestrusAlerts = asyncHandler(async (req, res) => {
         const cow = cowMap[a.cow_id] || {};
 
         return {
+            id: a._id?.toString() || '',
+            _id: a._id?.toString() || '',
             cow_id: a.cow_id,
             cow_name: cow.name || 'Unknown',
             image_url: cow.image_url || '',
