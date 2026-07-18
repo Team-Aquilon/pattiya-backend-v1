@@ -8,7 +8,11 @@ const influxService = require('../services/influxService');
 const { publishAddMAC, publishRemoveMAC } = require('../services/mqttHandler');
 const config = require('../config');
 const asyncHandler = require('../middleware/asyncHandler');
-const { buildCloudinaryFolder, uploadImage: uploadCloudinaryImage } = require('../services/cloudinaryService');
+const {
+    buildCloudinaryFolder,
+    destroyImage: destroyCloudinaryImage,
+    uploadImage: uploadCloudinaryImage,
+} = require('../services/cloudinaryService');
 
 // ─── Status priority for sorting ───────────────────────────
 
@@ -268,6 +272,30 @@ exports.uploadImage = asyncHandler(async (req, res) => {
         },
     });
 });
+
+exports.deleteImage = asyncHandler(async (req, res) => {
+    const cow = await Cow.findOne({ cow_id: req.params.cow_id, farm_id: req.farmId });
+    if (!cow) {
+        return res.status(404).json({ status: 'error', message: 'Cow not found' });
+    }
+
+    if (cow.image_public_id) {
+        await destroyCloudinaryImage(cow.image_public_id);
+    }
+
+    cow.image_url = '';
+    cow.image_public_id = '';
+    await cow.save();
+
+    res.json({
+        status: 'success',
+        data: {
+            image_url: '',
+            public_id: '',
+        },
+    });
+});
+
 // ─── 4.1 Get Cow Locations ────────────────────────────────
 
 exports.getLocations = asyncHandler(async (req, res) => {
