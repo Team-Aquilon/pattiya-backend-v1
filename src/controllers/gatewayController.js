@@ -5,6 +5,8 @@ const Cow = require('../models/Cow');
 const Farm = require('../models/Farm');
 const Notification = require('../models/Notification');
 const HealthEvent = require('../models/HealthEvent');
+const OestrusAlert = require('../models/OestrusAlert');
+const MethaneSession = require('../models/MethaneSession');
 const influxService = require('../services/influxService');
 const fcmService = require('../services/fcmService');
 const { calculateTHI, classifyTHI } = require('../utils/thi');
@@ -339,4 +341,184 @@ exports.emergencyAlert = asyncHandler(async (req, res) => {
     });
 
     res.json({ status: 'alert_received', action_taken: 'FCM_Push_Notification_Triggered' });
+});
+
+// ─── 11.6 Multimodal AI Telemetry Endpoints ──────────────
+
+exports.activityPrediction = asyncHandler(async (req, res) => {
+    const { gateway_id, cow_id, mac_address, timestamp, features, predicted_activity, activity_state, confidence, battery, rssi_dbm, snr_db } = req.body;
+    
+    await influxService.writeActivityPrediction(req.farmId, gateway_id, req.body);
+    
+    if (mac_address) {
+        const cow = await Cow.findOne({ collar_mac: mac_address.toUpperCase(), farm_id: req.farmId });
+        if (cow) {
+            cow.last_update = new Date(timestamp || Date.now());
+            if (battery !== undefined) {
+                cow.battery_percentage = battery;
+                if (battery <= 10) {
+                    cow.battery_status = 'CRITICAL';
+                } else if (battery <= 25) {
+                    cow.battery_status = 'LOW';
+                } else {
+                    cow.battery_status = 'NORMAL';
+                }
+            }
+            await cow.save();
+        }
+    }
+    
+    res.json({ status: 'success', message: 'Activity prediction stored' });
+});
+
+exports.soundPrediction = asyncHandler(async (req, res) => {
+    const { gateway_id, mac_address, timestamp, event_start_ms, oestrus_probability, label, rssi_dbm, snr_db } = req.body;
+    
+    await influxService.writeSoundPrediction(req.farmId, gateway_id, req.body);
+    
+    res.json({ status: 'success', message: 'Sound prediction stored' });
+});
+
+exports.environmentReading = asyncHandler(async (req, res) => {
+    const { gateway_id, timestamp, uptime_ms, temperature_c, humidity_percent, valid } = req.body;
+    
+    let thi = null;
+    if (valid) {
+        thi = calculateTHI(temperature_c, humidity_percent);
+        await influxService.writeEnvironmentData(req.farmId, gateway_id, temperature_c, humidity_percent, thi, timestamp || new Date().toISOString());
+        
+        if (thi > THI_ALERT_THRESHOLD) {
+            const thiClass = classifyTHI(thi);
+            if (thiClass && thiClass.alert) {
+                await handleHeatStressAlert(req.farmId, temperature_c, humidity_percent, thi, thiClass);
+            }
+        }
+    }
+    
+    res.json({ status: 'success', message: 'Environment data stored', data: { thi } });
+});
+
+exports.statusHeartbeat = asyncHandler(async (req, res) => {
+    const { gateway_id, cow_id, mac_address, lat, lon, uptime_ms, battery, gps_age_ms, rssi_dbm, snr_db } = req.body;
+    
+    if (mac_address) {
+        const cow = await Cow.findOne({ collar_mac: mac_address.toUpperCase(), farm_id: req.farmId });
+        if (cow) {
+            if (lat !== undefined && lon !== undefined) {
+                cow.last_location = { lat, lng: lon };
+            }
+            if (battery !== undefined) {
+                cow.battery_percentage = battery;
+                if (battery <= 10) {
+                    cow.battery_status = 'CRITICAL';
+                    cow.status = 'LOW_BATTERY';
+                } else if (battery <= 25) {
+                    cow.battery_status = 'LOW';
+                } else {
+                    cow.battery_status = 'NORMAL';
+                }
+            }
+            cow.last_update = new Date();
+            await cow.save();
+        }
+    }
+    
+    res.json({ status: 'success', message: 'Status updated' });
+});
+
+exports.oestrusFusion = asyncHandler(async (req, res) => {
+    const { gateway_id, cow_id, mac_address, decision, sound_label, sound_probability, activity_label, activity_state, temperature_c, humidity_percent, rssi_dbm, snr_db } = req.body;
+    
+    await influxService.writeOestrusFusion(req.farmId, gateway_id, req.body);
+    
+    await OestrusAlert.create({
+        farm_id: req.farmId,
+        cow_id,
+        mac_address,
+        decision,
+        sound_label,
+        sound_probability,
+        activity_label,
+        activity_state,
+        temperature_c,
+        humidity_percent,
+        timestamp: new Date()
+    });
+    
+    if (decision === 'LIKELY_OESTRUS') {
+        const cow = await Cow.findOne({ collar_mac: mac_address?.toUpperCase(), farm_id: req.farmId });
+        if (cow) {
+            cow.status = 'HEAT_DETECTED';
+            await cow.save();
+            
+            await HealthEvent.create({
+                farm_id: req.farmId,
+                cow_id: cow.cow_id,
+                event_type: 'HEAT_DETECTED',
+                date: new Date(),
+                notes: `Fusion Details: Sound=${sound_label} (${sound_probability}), Activity=${activity_label}, Temp=${temperature_c}, Hum=${humidity_percent}`,
+                auto_generated: true
+            });
+            
+            const notification = await Notification.create({
+                farm_id: req.farmId,
+                cow_id: cow.cow_id,
+                type: 'HEAT_DETECTED',
+                title: 'Heat Detected',
+                message: `${cow.name || cow.cow_id} is likely in oestrus.`,
+                severity: 'CRITICAL',
+                data: { decision, sound_label, activity_label }
+            });
+            
+            await fcmService.sendToFarm(req.farmId, {
+                title: '🔥 Heat Detected',
+                body: `${cow.name || cow.cow_id} is likely in oestrus based on multimodal fusion.`,
+                data: {
+                    type: 'HEAT_DETECTED',
+                    cow_id: cow.cow_id,
+                    notification_id: notification._id.toString()
+                }
+            });
+        }
+    } else if (decision === 'WATCH') {
+        const cow = await Cow.findOne({ collar_mac: mac_address?.toUpperCase(), farm_id: req.farmId });
+        await Notification.create({
+            farm_id: req.farmId,
+            cow_id: cow ? cow.cow_id : cow_id,
+            type: 'HEAT_DETECTED',
+            title: '👀 Oestrus Watch',
+            message: `${cow ? cow.name : cow_id} is showing some signs of oestrus. Keep watching.`,
+            severity: 'MEDIUM',
+            data: { decision }
+        });
+    }
+    
+    res.json({ status: 'success', message: 'Fusion decision processed', data: { decision, alert_triggered: decision !== 'NORMAL' } });
+});
+
+exports.methaneSample = asyncHandler(async (req, res) => {
+    const { gateway_id } = req.body;
+    await influxService.writeMethaneSample(req.farmId, gateway_id, req.body);
+    res.json({ status: 'success', message: 'Methane sample stored' });
+});
+
+exports.methaneSession = asyncHandler(async (req, res) => {
+    const { gateway_id, cow_id, rfid_tag, avg_delta_ch4_ppm, session_start_time } = req.body;
+    
+    await MethaneSession.create({
+        farm_id: req.farmId,
+        ...req.body
+    });
+
+    if (avg_delta_ch4_ppm > 600) {
+        let cow = null;
+        if (cow_id) cow = await Cow.findOne({ cow_id, farm_id: req.farmId });
+        if (!cow && rfid_tag) cow = await Cow.findOne({ rfid_tag, farm_id: req.farmId });
+        
+        if (cow) {
+            await handleHighMethaneAlert(req.farmId, cow, avg_delta_ch4_ppm, session_start_time || new Date());
+        }
+    }
+
+    res.json({ status: 'success', message: 'Methane session stored' });
 });

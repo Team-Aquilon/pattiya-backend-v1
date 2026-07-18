@@ -260,6 +260,260 @@ async function queryEnvironmentHistory(farmId, range = '-24h', window = '30m') {
     return rows;
 }
 
+/**
+ * Write activity prediction.
+ * 
+ * @param {string} farmId
+ * @param {string} gatewayId
+ * @param {object} data
+ */
+async function writeActivityPrediction(farmId, gatewayId, data) {
+    const writeApi = getWriteApi();
+
+    const point = new Point('activity_prediction')
+        .tag('farm_id', farmId)
+        .tag('mac', data.mac_address || '')
+        .tag('gateway', gatewayId)
+        .stringField('predicted_activity', data.predicted_activity || 'unknown')
+        .stringField('activity_state', data.activity_state || 'unknown')
+        .floatField('confidence', data.confidence || 0)
+        .floatField('battery', data.battery || 0)
+        .floatField('mean_acc', data.mean_acc || 0)
+        .floatField('std_acc', data.std_acc || 0)
+        .floatField('energy_acc', data.energy_acc || 0)
+        .floatField('mean_gyro', data.mean_gyro || 0)
+        .floatField('std_gyro', data.std_gyro || 0)
+        .floatField('energy_gyro', data.energy_gyro || 0)
+        .timestamp(data.timestamp ? new Date(data.timestamp) : new Date());
+
+    writeApi.writePoint(point);
+
+    try {
+        await writeApi.flush();
+    } catch (err) {
+        console.error('[InfluxService] ❌ Activity prediction write error:', err.message);
+    }
+}
+
+/**
+ * Write sound prediction.
+ *
+ * @param {string} farmId
+ * @param {string} gatewayId
+ * @param {object} data
+ */
+async function writeSoundPrediction(farmId, gatewayId, data) {
+    const writeApi = getWriteApi();
+
+    const point = new Point('sound_prediction')
+        .tag('farm_id', farmId)
+        .tag('mac', data.mac_address || '')
+        .tag('gateway', gatewayId)
+        .floatField('oestrus_probability', data.oestrus_probability || 0)
+        .stringField('label', data.label || 'unknown')
+        .intField('event_start_ms', data.event_start_ms || 0)
+        .timestamp(data.timestamp ? new Date(data.timestamp) : new Date());
+
+    writeApi.writePoint(point);
+
+    try {
+        await writeApi.flush();
+    } catch (err) {
+        console.error('[InfluxService] ❌ Sound prediction write error:', err.message);
+    }
+}
+
+/**
+ * Write oestrus fusion.
+ *
+ * @param {string} farmId
+ * @param {string} gatewayId
+ * @param {object} data
+ */
+async function writeOestrusFusion(farmId, gatewayId, data) {
+    const writeApi = getWriteApi();
+
+    const point = new Point('oestrus_fusion')
+        .tag('farm_id', farmId)
+        .tag('mac', data.cow_id || '')
+        .tag('gateway', gatewayId)
+        .stringField('decision', data.decision || 'NORMAL')
+        .stringField('sound_label', data.sound_label || 'normal')
+        .floatField('sound_probability', data.sound_probability || 0)
+        .stringField('activity_label', data.activity_label || 'unknown')
+        .stringField('activity_state', data.activity_state || 'normal_activity')
+        .floatField('temperature_c', data.temperature_c || 0)
+        .floatField('humidity_percent', data.humidity_percent || 0)
+        .timestamp(new Date());
+
+    writeApi.writePoint(point);
+
+    try {
+        await writeApi.flush();
+    } catch (err) {
+        console.error('[InfluxService] ❌ Oestrus fusion write error:', err.message);
+    }
+}
+
+/**
+ * Query activity predictions.
+ *
+ * @param {string} mac
+ * @param {string} range
+ * @param {number} limit
+ */
+async function queryActivityPredictions(mac, range = '-24h', limit = 100) {
+    const queryApi = getQueryApi();
+    const bucket = config.influx.bucket;
+
+    const query = `
+    from(bucket: "${bucket}")
+      |> range(start: ${range})
+      |> filter(fn: (r) => r._measurement == "activity_prediction" and r.mac == "${mac}")
+      |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+      |> sort(columns: ["_time"], desc: true)
+      |> limit(n: ${limit})
+  `;
+
+    const rows = [];
+    await new Promise((resolve, reject) => {
+        queryApi.queryRows(query, {
+            next(row, tableMeta) {
+                const o = tableMeta.toObject(row);
+                rows.push({
+                    time: o._time,
+                    predicted_activity: o.predicted_activity,
+                    activity_state: o.activity_state,
+                    confidence: o.confidence,
+                    battery: o.battery,
+                });
+            },
+            error: reject,
+            complete: resolve,
+        });
+    });
+
+    return rows;
+}
+
+/**
+ * Query sound predictions.
+ *
+ * @param {string} mac
+ * @param {string} range
+ * @param {number} limit
+ */
+async function querySoundPredictions(mac, range = '-24h', limit = 100) {
+    const queryApi = getQueryApi();
+    const bucket = config.influx.bucket;
+
+    const query = `
+    from(bucket: "${bucket}")
+      |> range(start: ${range})
+      |> filter(fn: (r) => r._measurement == "sound_prediction" and r.mac == "${mac}")
+      |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+      |> sort(columns: ["_time"], desc: true)
+      |> limit(n: ${limit})
+  `;
+
+    const rows = [];
+    await new Promise((resolve, reject) => {
+        queryApi.queryRows(query, {
+            next(row, tableMeta) {
+                const o = tableMeta.toObject(row);
+                rows.push({
+                    time: o._time,
+                    oestrus_probability: o.oestrus_probability,
+                    label: o.label,
+                });
+            },
+            error: reject,
+            complete: resolve,
+        });
+    });
+
+    return rows;
+}
+
+/**
+ * Query latest predictions.
+ *
+ * @param {string} mac
+ */
+async function queryLatestPredictions(mac) {
+    const queryApi = getQueryApi();
+    const bucket = config.influx.bucket;
+
+    const activityQuery = `
+    from(bucket: "${bucket}")
+      |> range(start: -24h)
+      |> filter(fn: (r) => r._measurement == "activity_prediction" and r.mac == "${mac}")
+      |> last()
+      |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+  `;
+
+    const soundQuery = `
+    from(bucket: "${bucket}")
+      |> range(start: -24h)
+      |> filter(fn: (r) => r._measurement == "sound_prediction" and r.mac == "${mac}")
+      |> last()
+      |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+  `;
+
+    let activity = null;
+    await new Promise((resolve, reject) => {
+        queryApi.queryRows(activityQuery, {
+            next(row, tableMeta) {
+                const o = tableMeta.toObject(row);
+                activity = {
+                    time: o._time,
+                    predicted_activity: o.predicted_activity,
+                    activity_state: o.activity_state,
+                    confidence: o.confidence,
+                };
+            },
+            error: reject,
+            complete: resolve,
+        });
+    });
+
+    let sound = null;
+    await new Promise((resolve, reject) => {
+        queryApi.queryRows(soundQuery, {
+            next(row, tableMeta) {
+                const o = tableMeta.toObject(row);
+                sound = {
+                    time: o._time,
+                    oestrus_probability: o.oestrus_probability,
+                    label: o.label,
+                };
+            },
+            error: reject,
+            complete: resolve,
+        });
+    });
+
+    return { activity, sound };
+}
+
+async function writeMethaneSample(farmId, gatewayId, data) {
+    const writeApi = getWriteApi();
+    const point = new Point('methane_sample')
+        .tag('farm_id', farmId)
+        .tag('gateway', gatewayId)
+        .tag('device', data.device_id || 'unknown')
+        .tag('cow_id', data.cow_id || 'unknown')
+        .floatField('ch4_cow_ppm', data.ch4_cow_ppm || 0)
+        .floatField('ch4_ambient_ppm', data.ch4_ambient_ppm || 0)
+        .floatField('delta_ch4_ppm', data.delta_ch4_ppm || 0)
+        .floatField('pressure_pa', data.pressure_pa || 0)
+        .floatField('airflow_lpm', data.airflow_lpm || 0)
+        .floatField('methane_flow_ml_min', data.methane_flow_ml_min || 0)
+        .timestamp(new Date(data.timestamp));
+    writeApi.writePoint(point);
+    try { await writeApi.flush(); } catch (err) { console.error('[Influx] Methane sample write error:', err.message); }
+}
+
 module.exports = {
     writeVitalsBatch,
     writeActivityBatch,
@@ -268,4 +522,11 @@ module.exports = {
     writeEnvironmentData,
     queryLatestEnvironment,
     queryEnvironmentHistory,
+    writeActivityPrediction,
+    writeSoundPrediction,
+    writeOestrusFusion,
+    queryActivityPredictions,
+    querySoundPredictions,
+    queryLatestPredictions,
+    writeMethaneSample,
 };

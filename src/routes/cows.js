@@ -44,6 +44,8 @@ router.get('/', cowController.listCows);
 router.post('/register', cowController.registerCow);
 
 // Single cow
+// Active oestrus alerts (must be before /:cow_id to avoid route conflict)
+router.get('/oestrus/active', cowController.getActiveOestrusAlerts);
 router.get('/:cow_id', cowController.getCow);
 router.put('/:cow_id', cowController.updateCow);
 router.get('/:cow_id/history', cowController.getCowHistory);
@@ -60,5 +62,12 @@ router.get('/:cow_id/methane/history', cowController.getMethaneHistory);
 // Milk tracking
 router.post('/:cow_id/milk', cowController.addMilkRecord);
 router.get('/:cow_id/milk/stats', cowController.getMilkStats);
+
+// AI Predictions
+router.get('/:cow_id/predictions/latest', cowController.getLatestPredictions);
+router.get('/:cow_id/predictions/history', cowController.getPredictionHistory);
+
+// Oestrus fusion alerts
+router.get('/:cow_id/oestrus/alerts', cowController.getOestrusAlerts);
 
 module.exports = router;
