@@ -2,7 +2,7 @@
   "name": "pattiya-backend",
   "version": "1.0.0",
   "description": "Pattiya Smart Cattle Ecosystem - Cloud Backend",
-  "main": "src/server.js",
+  "main": "index.js",
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",

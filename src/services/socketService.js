@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const { Server } = require('socket.io');
 const config = require('../config');
+const { connectMongoDB } = require('../config/mongodb');
 const User = require('../models/User');
 
 let io = null;
@@ -28,10 +29,13 @@ function getSocketToken(socket) {
     return Array.isArray(queryToken) ? queryToken[0] : queryToken;
 }
 
-function initSocketServer(server) {
+function initSocketServer(server, options = {}) {
     if (io) return io;
 
+    const socketPath = options.path || process.env.SOCKET_IO_PATH || '/socket.io';
+
     io = new Server(server, {
+        path: socketPath,
         cors: {
             origin: '*',
             methods: ['GET', 'POST'],
@@ -44,6 +48,7 @@ function initSocketServer(server) {
             if (!token) return next(new Error('Authentication required'));
 
             const decoded = jwt.verify(token, config.jwt.secret);
+            await connectMongoDB();
             if (!decoded.userId || !decoded.farmId) {
                 return next(new Error('Invalid socket token'));
             }
@@ -71,7 +76,7 @@ function initSocketServer(server) {
         });
     });
 
-    console.log('[Socket.IO] Realtime alert server initialized');
+    console.log('[Socket.IO] Realtime alert server initialized at ' + socketPath);
     return io;
 }
 
