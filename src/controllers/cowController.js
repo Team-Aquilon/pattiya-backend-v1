@@ -207,6 +207,35 @@ exports.listCows = asyncHandler(async (req, res) => {
 
 // ─── 2.3 Single Cow Detail ────────────────────────────────
 
+// Public mock-test cow options. Keep this response intentionally small because
+// it is used by simulators without a mobile user access token.
+exports.listMockCowOptions = asyncHandler(async (req, res) => {
+    const { farm_id: farmId, search } = req.query;
+    const filter = { is_active: true };
+
+    if (farmId) {
+        filter.farm_id = farmId;
+    }
+    if (search) {
+        filter.name = { $regex: search, $options: 'i' };
+    }
+
+    const cows = await Cow.find(filter)
+        .select('cow_id name')
+        .sort({ cow_id: 1 })
+        .lean();
+
+    res.json({
+        status: 'success',
+        data: {
+            cows: cows.map((cow) => ({
+                cow_id: cow.cow_id,
+                cow_name: cow.name,
+            })),
+            count: cows.length,
+        },
+    });
+});
 exports.getCow = asyncHandler(async (req, res) => {
     const cow = await Cow.findOne({
         cow_id: req.params.cow_id,
@@ -833,3 +862,4 @@ exports.getActiveOestrusAlerts = asyncHandler(async (req, res) => {
         }
     });
 });
+

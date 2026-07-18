@@ -4,6 +4,9 @@ const cowController = require('../controllers/cowController');
 const { auth } = require('../middleware/auth');
 const { uploadSingleImage } = require('../middleware/imageUpload');
 
+// Public mock-test route: no mobile user access token required.
+router.get('/mock-test/list', cowController.listMockCowOptions);
+
 // All cow routes require user authentication
 router.use(auth);
 
@@ -46,3 +49,4 @@ router.get('/:cow_id/predictions/history', cowController.getPredictionHistory);
 router.get('/:cow_id/oestrus/alerts', cowController.getOestrusAlerts);
 
 module.exports = router;
+

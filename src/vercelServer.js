@@ -10,13 +10,7 @@ function normalizeVercelUrl(req) {
         return;
     }
 
-    if (
-        req.url === '/socket.io' ||
-        req.url.startsWith('/socket.io/') ||
-        req.url.startsWith('/socket.io?')
-    ) {
-        req.url = `/api${req.url}`;
-    }
+
 }
 
 const server = http.createServer((req, res) => {
@@ -24,7 +18,7 @@ const server = http.createServer((req, res) => {
 });
 
 initSocketServer(server, {
-    path: process.env.SOCKET_IO_PATH || '/api/socket.io',
+    path: process.env.SOCKET_IO_PATH || '/socket.io',
 });
 
 server.prependListener('request', normalizeVercelUrl);

@@ -40,7 +40,7 @@ app.get('/', (_req, res) => {
     res.json({
         status: 'ok',
         service: 'pattiya-backend',
-        health: '/api/v1/health',
+        health: '/v1/health',
     });
 });
 
@@ -48,13 +48,16 @@ app.get('/favicon.ico', (_req, res) => {
     res.status(204).end();
 });
 
-app.get('/api/v1/health', (_req, res) => {
+function healthHandler(_req, res) {
     res.json({
         status: 'ok',
         service: 'pattiya-backend',
         timestamp: new Date().toISOString(),
     });
-});
+}
+
+app.get('/api/v1/health', healthHandler);
+app.get('/v1/health', healthHandler);
 
 const ensureMongoDB = async (_req, res, next) => {
     try {
@@ -71,13 +74,18 @@ const ensureMongoDB = async (_req, res, next) => {
 
 // --------------- API Routes ---------------
 
-app.use('/api/v1/system', systemRoutes);
-app.use('/api/v1/auth', ensureMongoDB, authRoutes);
-app.use('/api/v1/cows', ensureMongoDB, cowRoutes);
-app.use('/api/v1/gateway', ensureMongoDB, gatewayRoutes);
-app.use('/api/v1/user', ensureMongoDB, userRoutes);
-app.use('/api/v1/farm', ensureMongoDB, farmRoutes);
-app.use('/api/v1/notifications', ensureMongoDB, notificationRoutes);
+function mountApiRoutes(prefix) {
+    app.use(`${prefix}/system`, systemRoutes);
+    app.use(`${prefix}/auth`, ensureMongoDB, authRoutes);
+    app.use(`${prefix}/cows`, ensureMongoDB, cowRoutes);
+    app.use(`${prefix}/gateway`, ensureMongoDB, gatewayRoutes);
+    app.use(`${prefix}/user`, ensureMongoDB, userRoutes);
+    app.use(`${prefix}/farm`, ensureMongoDB, farmRoutes);
+    app.use(`${prefix}/notifications`, ensureMongoDB, notificationRoutes);
+}
+
+mountApiRoutes('/api/v1');
+mountApiRoutes('/v1');
 
 // --------------- 404 Handler ---------------
 
