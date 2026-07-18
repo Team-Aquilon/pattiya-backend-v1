@@ -5,6 +5,7 @@ const { connectMQTT } = require('./config/mqtt');
 const { initFirebase } = require('./services/fcmService');
 const { initMQTTHandler } = require('./services/mqttHandler');
 const { startHeatDetectionCron } = require('./services/heatDetectionCron');
+const { initSocketServer } = require('./services/socketService');
 const app = require('./app');
 
 /**
@@ -56,6 +57,8 @@ async function startServer() {
         console.log('  /api/v1/system        → Metadata & Version');
         console.log('');
     });
+
+    initSocketServer(server);
 
     // --------------- Graceful Shutdown ---------------
 

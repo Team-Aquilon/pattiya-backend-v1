@@ -55,6 +55,25 @@ const notificationSchema = new mongoose.Schema(
     }
 );
 
+notificationSchema.pre('save', function setRealtimeAction(next) {
+    if (this.isNew) {
+        this.$locals.realtimeAction = 'created';
+    } else if (this.isModified('resolved_at') && this.resolved_at) {
+        this.$locals.realtimeAction = 'resolved';
+    } else if (this.isModified('dismissed_at') && this.dismissed_at) {
+        this.$locals.realtimeAction = 'dismissed';
+    } else if (this.isModified('is_read') || this.isModified('read_at')) {
+        this.$locals.realtimeAction = 'read';
+    } else {
+        this.$locals.realtimeAction = 'updated';
+    }
+    next();
+});
+
+notificationSchema.post('save', function emitRealtimeAlert(doc) {
+    const { emitNotificationAlert } = require('../services/socketService');
+    emitNotificationAlert(doc.$locals.realtimeAction || 'updated', doc);
+});
 notificationSchema.index({ farm_id: 1, createdAt: -1 });
 notificationSchema.index({ farm_id: 1, resolved_at: 1, dismissed_at: 1 });
 

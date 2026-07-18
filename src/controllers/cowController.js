@@ -31,22 +31,109 @@ function cowSortComparator(a, b) {
     return (STATUS_PRIORITY[a.status] || 3) - (STATUS_PRIORITY[b.status] || 3);
 }
 
+function statusAfterHeatResolution(cow) {
+    const batteryPercentage = Number(cow.battery_percentage) || 0;
+    if (cow.battery_status === 'CRITICAL' || (batteryPercentage > 0 && batteryPercentage <= 10)) {
+        return 'LOW_BATTERY';
+    }
+    return 'HEALTHY';
+}
+
+function activeOestrusAlertFilter(farmId, cowId) {
+    const filter = {
+        farm_id: farmId,
+        decision: { $ne: 'NORMAL' },
+        resolved_at: null,
+        dismissed_at: null,
+    };
+    if (cowId) filter.cow_id = cowId;
+    return filter;
+}
+
+function activeHeatNotificationFilter(farmId, cowId) {
+    const filter = {
+        farm_id: farmId,
+        type: 'HEAT_DETECTED',
+        resolved_at: null,
+        dismissed_at: null,
+        cow_id: { $ne: '' },
+    };
+    if (cowId) filter.cow_id = cowId;
+    return filter;
+}
+
+async function getActiveHeatStateByCow(farmId) {
+    const [alerts, notifications] = await Promise.all([
+        OestrusAlert.find(activeOestrusAlertFilter(farmId))
+            .select('cow_id decision')
+            .sort({ createdAt: -1 })
+            .lean(),
+        Notification.find(activeHeatNotificationFilter(farmId))
+            .select('cow_id')
+            .lean(),
+    ]);
+
+    const activeHeatStateByCow = new Map();
+    for (const alert of alerts) {
+        if (alert.cow_id && !activeHeatStateByCow.has(alert.cow_id)) {
+            activeHeatStateByCow.set(alert.cow_id, alert.decision);
+        }
+    }
+    for (const notification of notifications) {
+        if (notification.cow_id && !activeHeatStateByCow.has(notification.cow_id)) {
+            activeHeatStateByCow.set(notification.cow_id, 'LIKELY_OESTRUS');
+        }
+    }
+
+    return activeHeatStateByCow;
+}
+
+function effectiveDashboardStatus(cow, activeHeatStateByCow) {
+    if (cow.status === 'HEAT_DETECTED' && !activeHeatStateByCow.has(cow.cow_id)) {
+        return statusAfterHeatResolution(cow);
+    }
+    return cow.status;
+}
+
+async function clearResolvedHeatStatus(farmId, cowId) {
+    if (!cowId) return;
+
+    const [activeAlert, activeNotification] = await Promise.all([
+        OestrusAlert.exists(activeOestrusAlertFilter(farmId, cowId)),
+        Notification.exists(activeHeatNotificationFilter(farmId, cowId)),
+    ]);
+    if (activeAlert || activeNotification) return;
+
+    const cow = await Cow.findOne({ farm_id: farmId, cow_id: cowId, status: 'HEAT_DETECTED' })
+        .select('battery_percentage battery_status status');
+    if (!cow) return;
+
+    cow.status = statusAfterHeatResolution(cow);
+    cow.last_update = new Date();
+    await cow.save();
+}
+
 // ─── 2.1 Dashboard Summary ────────────────────────────────
 
 exports.dashboard = asyncHandler(async (req, res) => {
     const farmId = req.farmId;
     const cows = await Cow.find({ farm_id: farmId, is_active: true })
-        .select('cow_id name status last_update battery_percentage image_url')
+        .select('cow_id name status last_update battery_percentage battery_status image_url')
         .lean();
+    const activeHeatStateByCow = await getActiveHeatStateByCow(farmId);
+    const dashboardCows = cows.map((c) => ({
+        ...c,
+        status: effectiveDashboardStatus(c, activeHeatStateByCow),
+    }));
 
-    cows.sort(cowSortComparator);
+    dashboardCows.sort(cowSortComparator);
 
     const alertStatuses = ['HEAT_DETECTED', 'SICK', 'THEFT_ALERT'];
-    const alertsCount = cows.filter((c) => alertStatuses.includes(c.status)).length;
+    const alertsCount = dashboardCows.filter((c) => alertStatuses.includes(c.status)).length;
 
     // Friendly last_update
     const now = Date.now();
-    const formatted = cows.map((c) => {
+    const formatted = dashboardCows.map((c) => {
         const diffMs = now - new Date(c.last_update).getTime();
         const diffMins = Math.floor(diffMs / 60000);
         let last_update;
@@ -61,6 +148,9 @@ exports.dashboard = asyncHandler(async (req, res) => {
             status: c.status,
             last_update,
             battery_percentage: c.battery_percentage,
+            battery_status: c.battery_status,
+            oestrus_status: activeHeatStateByCow.get(c.cow_id) || 'NORMAL',
+            has_active_heat_alert: activeHeatStateByCow.has(c.cow_id),
             image_url: c.image_url || '',
         };
     });
@@ -87,12 +177,19 @@ exports.listCows = asyncHandler(async (req, res) => {
 
     const total = await Cow.countDocuments(filter);
     const cows = await Cow.find(filter)
-        .select('cow_id name status last_update battery_percentage breed collar_mac image_url')
+        .select('cow_id name status last_update battery_percentage battery_status breed collar_mac image_url')
         .lean();
+    const activeHeatStateByCow = await getActiveHeatStateByCow(farmId);
+    const inventoryCows = cows.map((c) => ({
+        ...c,
+        status: effectiveDashboardStatus(c, activeHeatStateByCow),
+        oestrus_status: activeHeatStateByCow.get(c.cow_id) || 'NORMAL',
+        has_active_heat_alert: activeHeatStateByCow.has(c.cow_id),
+    }));
 
-    cows.sort(cowSortComparator);
+    inventoryCows.sort(cowSortComparator);
 
-    const paginated = cows.slice((page - 1) * limit, page * limit);
+    const paginated = inventoryCows.slice((page - 1) * limit, page * limit);
 
     res.json({
         status: 'success',
@@ -661,6 +758,7 @@ exports.resolveOestrusAlert = asyncHandler(async (req, res) => {
     alert.resolved_at = alert.resolved_at || now;
     await alert.save();
     await syncHeatNotificationsForOestrusAlert(alert, { resolved_at: now });
+    await clearResolvedHeatStatus(alert.farm_id, alert.cow_id);
 
     res.json({ status: 'success', data: alert });
 });
@@ -673,6 +771,7 @@ exports.dismissOestrusAlert = asyncHandler(async (req, res) => {
     alert.dismissed_at = alert.dismissed_at || now;
     await alert.save();
     await syncHeatNotificationsForOestrusAlert(alert, { dismissed_at: now });
+    await clearResolvedHeatStatus(alert.farm_id, alert.cow_id);
 
     res.json({ status: 'success', data: alert });
 });

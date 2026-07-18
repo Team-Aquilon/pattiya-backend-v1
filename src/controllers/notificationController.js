@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const User = require('../models/User');
+const Cow = require('../models/Cow');
 const Notification = require('../models/Notification');
 const OestrusAlert = require('../models/OestrusAlert');
 const asyncHandler = require('../middleware/asyncHandler');
@@ -42,6 +43,50 @@ async function syncHeatOestrusAlerts(notification, updates) {
         },
         { $set: updates }
     );
+}
+
+function statusAfterHeatResolution(cow) {
+    const batteryPercentage = Number(cow.battery_percentage) || 0;
+    if (cow.battery_status === 'CRITICAL' || (batteryPercentage > 0 && batteryPercentage <= 10)) {
+        return 'LOW_BATTERY';
+    }
+    return 'HEALTHY';
+}
+
+async function clearResolvedHeatStatus(notification) {
+    if (notification.type !== 'HEAT_DETECTED' || !notification.cow_id) return;
+
+    const heatFilter = {
+        farm_id: notification.farm_id,
+        cow_id: notification.cow_id,
+        type: 'HEAT_DETECTED',
+        resolved_at: null,
+        dismissed_at: null,
+    };
+    const alertFilter = {
+        farm_id: notification.farm_id,
+        cow_id: notification.cow_id,
+        decision: { $ne: 'NORMAL' },
+        resolved_at: null,
+        dismissed_at: null,
+    };
+
+    const [activeNotification, activeAlert] = await Promise.all([
+        Notification.exists(heatFilter),
+        OestrusAlert.exists(alertFilter),
+    ]);
+    if (activeNotification || activeAlert) return;
+
+    const cow = await Cow.findOne({
+        farm_id: notification.farm_id,
+        cow_id: notification.cow_id,
+        status: 'HEAT_DETECTED',
+    }).select('battery_percentage battery_status status');
+    if (!cow) return;
+
+    cow.status = statusAfterHeatResolution(cow);
+    cow.last_update = new Date();
+    await cow.save();
 }
 
 // 3.1 Register Device for Alerts
@@ -109,6 +154,7 @@ exports.resolveNotification = asyncHandler(async (req, res) => {
     notification.resolved_at = notification.resolved_at || now;
     await notification.save();
     await syncHeatOestrusAlerts(notification, { resolved_at: now });
+    await clearResolvedHeatStatus(notification);
 
     res.json({ status: 'success', data: notification });
 });
@@ -122,6 +168,7 @@ exports.dismissNotification = asyncHandler(async (req, res) => {
     notification.dismissed_at = notification.dismissed_at || now;
     await notification.save();
     await syncHeatOestrusAlerts(notification, { dismissed_at: now });
+    await clearResolvedHeatStatus(notification);
 
     res.json({ status: 'success', data: notification });
 });
