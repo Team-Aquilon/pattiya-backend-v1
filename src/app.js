@@ -14,6 +14,18 @@ const farmRoutes = require('./routes/farm');
 const notificationRoutes = require('./routes/notifications');
 const systemRoutes = require('./routes/system');
 
+// Initialize Databases for Serverless environments (like Vercel)
+const { connectMongoDB } = require('./config/mongodb');
+const { initFirebase } = require('./services/fcmService');
+
+// Connect to MongoDB immediately
+connectMongoDB().catch(console.error);
+try {
+    initFirebase();
+} catch (e) {
+    console.error("Firebase init failed (might already be initialized):", e.message);
+}
+
 const app = express();
 
 // --------------- Global Middleware ---------------
