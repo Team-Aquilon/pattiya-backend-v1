@@ -40,6 +40,18 @@ function buildCloudinaryFolder(...parts) {
         .join('/');
 }
 
+function buildDeliveryUrl(result) {
+    if (!result?.public_id) return result?.secure_url || result?.url || '';
+
+    return cloudinary.url(result.public_id, {
+        secure: true,
+        resource_type: 'image',
+        type: 'upload',
+        version: result.version,
+        transformation: [{ fetch_format: 'auto', quality: 'auto' }],
+    });
+}
+
 function uploadBuffer(buffer, options) {
     return new Promise((resolve, reject) => {
         const uploadStream = cloudinary.uploader.upload_stream(options, (error, result) => {
@@ -65,12 +77,13 @@ exports.uploadImage = async function uploadImage(file, { folder, publicId } = {}
             folder,
             public_id: publicId ? sanitizePathSegment(publicId) : undefined,
             overwrite: true,
+            invalidate: true,
         });
     } catch (err) {
         throw new AppError(`Cloudinary upload failed: ${err.message}`, 502);
     }
 
-    const url = result.secure_url || result.url;
+    const url = buildDeliveryUrl(result);
     if (!url) {
         throw new AppError('Cloudinary upload did not return an image URL', 502);
     }
@@ -108,3 +121,4 @@ exports.destroyImage = async function destroyImage(publicId) {
 };
 
 exports.buildCloudinaryFolder = buildCloudinaryFolder;
+exports.buildDeliveryUrl = buildDeliveryUrl;
