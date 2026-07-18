@@ -23,7 +23,7 @@ async function startServer() {
     console.log('═══════════════════════════════════════════\n');
 
     // 1. MongoDB
-    await connectMongoDB();
+    await connectMongoDB({ exitOnFailure: true });
 
     // 2. InfluxDB
     await pingInfluxDB();
