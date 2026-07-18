@@ -22,6 +22,7 @@ router.get('/:cow_id', cowController.getCow);
 router.put('/:cow_id', cowController.updateCow);
 router.get('/:cow_id/history', cowController.getCowHistory);
 router.post('/:cow_id/image', uploadSingleImage('image'), cowController.uploadImage);
+router.delete('/:cow_id/image', cowController.deleteImage);
 router.post('/:cow_id/unpair', cowController.unpairCow);
 
 // Health events

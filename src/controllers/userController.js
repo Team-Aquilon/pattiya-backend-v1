@@ -1,7 +1,11 @@
 const User = require('../models/User');
 const RefreshToken = require('../models/RefreshToken');
 const asyncHandler = require('../middleware/asyncHandler');
-const { buildCloudinaryFolder, uploadImage: uploadCloudinaryImage } = require('../services/cloudinaryService');
+const {
+    buildCloudinaryFolder,
+    destroyImage: destroyCloudinaryImage,
+    uploadImage: uploadCloudinaryImage,
+} = require('../services/cloudinaryService');
 
 function formatUserProfile(user) {
     return {
@@ -74,7 +78,32 @@ exports.uploadProfileImage = asyncHandler(async (req, res) => {
     });
 });
 
-// 5.6 Delete Account
+// 5.6 Delete User Profile Image
+exports.deleteProfileImage = asyncHandler(async (req, res) => {
+    const user = await User.findById(req.user._id);
+    if (!user) {
+        return res.status(404).json({ status: 'error', message: 'User not found' });
+    }
+
+    if (user.profile_image_public_id) {
+        await destroyCloudinaryImage(user.profile_image_public_id);
+    }
+
+    user.profile_image_url = '';
+    user.profile_image_public_id = '';
+    await user.save();
+
+    res.json({
+        status: 'success',
+        data: {
+            profile_image_url: '',
+            image_url: '',
+            public_id: '',
+        },
+    });
+});
+
+// 5.7 Delete Account
 exports.deleteAccount = asyncHandler(async (req, res) => {
     const { password, reason } = req.body;
 
