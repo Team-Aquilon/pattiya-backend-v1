@@ -4,11 +4,5 @@
     "api/[...path].js": {
       "maxDuration": 300
     }
-  },
-  "rewrites": [
-    {
-      "source": "/socket.io/:path*",
-      "destination": "/api/socket.io/:path*"
-    }
-  ]
+  }
 }
