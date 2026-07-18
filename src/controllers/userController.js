@@ -1,29 +1,34 @@
 const User = require('../models/User');
 const RefreshToken = require('../models/RefreshToken');
 const asyncHandler = require('../middleware/asyncHandler');
+const { buildCloudinaryFolder, uploadImage: uploadCloudinaryImage } = require('../services/cloudinaryService');
 
-// ─── 5.3 Get User Profile ──────────────────────────────────
+function formatUserProfile(user) {
+    return {
+        id: user._id,
+        name: user.name,
+        username: user.username,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        farm_id: user.farm_id,
+        profile_image_url: user.profile_image_url || '',
+        image_url: user.profile_image_url || '',
+        notification_settings: user.notification_settings,
+    };
+}
 
+// 5.3 Get User Profile
 exports.getProfile = asyncHandler(async (req, res) => {
     const user = await User.findById(req.user._id).select('-password -reset_code -reset_code_expires');
 
     res.json({
         status: 'success',
-        data: {
-            id: user._id,
-            name: user.name,
-            username: user.username,
-            email: user.email,
-            phone: user.phone,
-            role: user.role,
-            farm_id: user.farm_id,
-            notification_settings: user.notification_settings,
-        },
+        data: formatUserProfile(user),
     });
 });
 
-// ─── 5.4 Update User Profile ───────────────────────────────
-
+// 5.4 Update User Profile
 exports.updateProfile = asyncHandler(async (req, res) => {
     const { name, phone } = req.body;
     const updates = {};
@@ -34,16 +39,42 @@ exports.updateProfile = asyncHandler(async (req, res) => {
 
     res.json({
         status: 'success',
+        data: formatUserProfile(user),
+    });
+});
+
+// 5.5 Upload User Profile Image
+exports.uploadProfileImage = asyncHandler(async (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ status: 'error', message: 'Image file is required' });
+    }
+
+    const user = await User.findById(req.user._id);
+    if (!user) {
+        return res.status(404).json({ status: 'error', message: 'User not found' });
+    }
+
+    const folder = buildCloudinaryFolder('farms', user.farm_id, 'users');
+    const uploaded = await uploadCloudinaryImage(req.file, {
+        folder,
+        publicId: user._id.toString(),
+    });
+
+    user.profile_image_url = uploaded.url;
+    user.profile_image_public_id = uploaded.public_id || '';
+    await user.save();
+
+    res.json({
+        status: 'success',
         data: {
-            id: user._id,
-            name: user.name,
-            phone: user.phone,
+            profile_image_url: user.profile_image_url,
+            image_url: user.profile_image_url,
+            public_id: user.profile_image_public_id,
         },
     });
 });
 
-// ─── 5.6 Delete Account ────────────────────────────────────
-
+// 5.6 Delete Account
 exports.deleteAccount = asyncHandler(async (req, res) => {
     const { password, reason } = req.body;
 

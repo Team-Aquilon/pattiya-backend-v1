@@ -1,6 +1,3 @@
-const { v4: uuidv4 } = require('uuid');
-const path = require('path');
-const fs = require('fs');
 const Cow = require('../models/Cow');
 const HealthEvent = require('../models/HealthEvent');
 const MilkRecord = require('../models/MilkRecord');
@@ -11,6 +8,7 @@ const influxService = require('../services/influxService');
 const { publishAddMAC, publishRemoveMAC } = require('../services/mqttHandler');
 const config = require('../config');
 const asyncHandler = require('../middleware/asyncHandler');
+const { buildCloudinaryFolder, uploadImage: uploadCloudinaryImage } = require('../services/cloudinaryService');
 
 // ─── Status priority for sorting ───────────────────────────
 
@@ -32,7 +30,7 @@ function cowSortComparator(a, b) {
 exports.dashboard = asyncHandler(async (req, res) => {
     const farmId = req.farmId;
     const cows = await Cow.find({ farm_id: farmId, is_active: true })
-        .select('cow_id name status last_update battery_percentage')
+        .select('cow_id name status last_update battery_percentage image_url')
         .lean();
 
     cows.sort(cowSortComparator);
@@ -57,6 +55,7 @@ exports.dashboard = asyncHandler(async (req, res) => {
             status: c.status,
             last_update,
             battery_percentage: c.battery_percentage,
+            image_url: c.image_url || '',
         };
     });
 
@@ -82,7 +81,7 @@ exports.listCows = asyncHandler(async (req, res) => {
 
     const total = await Cow.countDocuments(filter);
     const cows = await Cow.find(filter)
-        .select('cow_id name status last_update battery_percentage breed collar_mac')
+        .select('cow_id name status last_update battery_percentage breed collar_mac image_url')
         .lean();
 
     cows.sort(cowSortComparator);
@@ -118,7 +117,7 @@ exports.getCow = asyncHandler(async (req, res) => {
     res.json({
         id: cow.cow_id,
         name: cow.name,
-        image_url: cow.image_url,
+        image_url: cow.image_url || '',
         breed: cow.breed,
         dob: cow.dob,
         weight_kg: cow.weight_kg,
@@ -235,7 +234,7 @@ exports.registerCow = asyncHandler(async (req, res) => {
 
     res.status(201).json({
         status: 'success',
-        data: { cow_id: cow.cow_id, name: cow.name, collar_mac: cow.collar_mac },
+        data: { cow_id: cow.cow_id, name: cow.name, collar_mac: cow.collar_mac, image_url: cow.image_url || '' },
     });
 });
 
@@ -251,14 +250,24 @@ exports.uploadImage = asyncHandler(async (req, res) => {
         return res.status(400).json({ status: 'error', message: 'Image file is required' });
     }
 
-    // Build URL path (static file serving)
-    const imageUrl = `/uploads/cows/${req.file.filename}`;
-    cow.image_url = imageUrl;
+    const folder = buildCloudinaryFolder('farms', req.farmId, 'cows');
+    const uploaded = await uploadCloudinaryImage(req.file, {
+        folder,
+        publicId: cow.cow_id,
+    });
+
+    cow.image_url = uploaded.url;
+    cow.image_public_id = uploaded.public_id || '';
     await cow.save();
 
-    res.json({ status: 'success', data: { image_url: imageUrl } });
+    res.json({
+        status: 'success',
+        data: {
+            image_url: cow.image_url,
+            public_id: cow.image_public_id,
+        },
+    });
 });
-
 // ─── 4.1 Get Cow Locations ────────────────────────────────
 
 exports.getLocations = asyncHandler(async (req, res) => {
@@ -598,21 +607,26 @@ exports.getActiveOestrusAlerts = asyncHandler(async (req, res) => {
     const activeAlertsList = Object.values(latestAlertsMap);
 
     const cowIds = activeAlertsList.map(a => a.cow_id);
-    const cows = await Cow.find({ farm_id: req.farmId, cow_id: { $in: cowIds } }).select('cow_id name').lean();
+    const cows = await Cow.find({ farm_id: req.farmId, cow_id: { $in: cowIds } }).select('cow_id name image_url').lean();
     
     const cowMap = {};
     for (const cow of cows) {
-        cowMap[cow.cow_id] = cow.name;
+        cowMap[cow.cow_id] = { name: cow.name, image_url: cow.image_url || '' };
     }
 
-    const formattedAlerts = activeAlertsList.map(a => ({
-        cow_id: a.cow_id,
-        cow_name: cowMap[a.cow_id] || 'Unknown',
-        decision: a.decision,
-        sound_label: a.sound_label,
-        activity_state: a.activity_state,
-        created_at: a.createdAt
-    }));
+    const formattedAlerts = activeAlertsList.map(a => {
+        const cow = cowMap[a.cow_id] || {};
+
+        return {
+            cow_id: a.cow_id,
+            cow_name: cow.name || 'Unknown',
+            image_url: cow.image_url || '',
+            decision: a.decision,
+            sound_label: a.sound_label,
+            activity_state: a.activity_state,
+            created_at: a.createdAt
+        };
+    });
 
     res.json({
         status: 'success',

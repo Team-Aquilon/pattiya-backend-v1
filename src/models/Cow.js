@@ -21,6 +21,10 @@ const cowSchema = new mongoose.Schema(
             type: String,
             default: '',
         },
+        image_public_id: {
+            type: String,
+            default: '',
+        },
         breed: {
             type: String,
             default: '',
