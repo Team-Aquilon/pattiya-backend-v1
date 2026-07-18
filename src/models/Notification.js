@@ -33,6 +33,18 @@ const notificationSchema = new mongoose.Schema(
             type: Boolean,
             default: false,
         },
+        read_at: {
+            type: Date,
+            default: null,
+        },
+        resolved_at: {
+            type: Date,
+            default: null,
+        },
+        dismissed_at: {
+            type: Date,
+            default: null,
+        },
         data: {
             type: mongoose.Schema.Types.Mixed,
             default: {},
@@ -44,5 +56,6 @@ const notificationSchema = new mongoose.Schema(
 );
 
 notificationSchema.index({ farm_id: 1, createdAt: -1 });
+notificationSchema.index({ farm_id: 1, resolved_at: 1, dismissed_at: 1 });
 
 module.exports = mongoose.model('Notification', notificationSchema);

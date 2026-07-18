@@ -53,6 +53,14 @@ const oestrusAlertSchema = new mongoose.Schema(
             type: Number,
             default: 0,
         },
+        resolved_at: {
+            type: Date,
+            default: null,
+        },
+        dismissed_at: {
+            type: Date,
+            default: null,
+        },
     },
     {
         timestamps: true,
@@ -62,5 +70,6 @@ const oestrusAlertSchema = new mongoose.Schema(
 // Indexes
 oestrusAlertSchema.index({ farm_id: 1, decision: 1, createdAt: -1 });
 oestrusAlertSchema.index({ farm_id: 1, cow_id: 1, createdAt: -1 });
+oestrusAlertSchema.index({ farm_id: 1, resolved_at: 1, dismissed_at: 1 });
 
 module.exports = mongoose.model('OestrusAlert', oestrusAlertSchema);

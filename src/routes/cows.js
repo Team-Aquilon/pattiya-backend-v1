@@ -18,6 +18,8 @@ router.post('/register', cowController.registerCow);
 // Single cow
 // Active oestrus alerts (must be before /:cow_id to avoid route conflict)
 router.get('/oestrus/active', cowController.getActiveOestrusAlerts);
+router.patch('/oestrus/alerts/:alert_id/resolve', cowController.resolveOestrusAlert);
+router.patch('/oestrus/alerts/:alert_id/dismiss', cowController.dismissOestrusAlert);
 router.get('/:cow_id', cowController.getCow);
 router.put('/:cow_id', cowController.updateCow);
 router.get('/:cow_id/history', cowController.getCowHistory);

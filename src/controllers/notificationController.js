@@ -1,9 +1,50 @@
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const Notification = require('../models/Notification');
+const OestrusAlert = require('../models/OestrusAlert');
 const asyncHandler = require('../middleware/asyncHandler');
 
-// ─── 3.1 Register Device for Alerts ───────────────────────
+function isValidId(id) {
+    return mongoose.Types.ObjectId.isValid(id);
+}
 
+async function findFarmNotification(req, res) {
+    const { notification_id: notificationId } = req.params;
+    if (!isValidId(notificationId)) {
+        res.status(404).json({ status: 'error', message: 'Notification not found' });
+        return null;
+    }
+
+    const notification = await Notification.findOne({ _id: notificationId, farm_id: req.farmId });
+    if (!notification) {
+        res.status(404).json({ status: 'error', message: 'Notification not found' });
+        return null;
+    }
+
+    return notification;
+}
+
+function markRead(notification, at = new Date()) {
+    notification.is_read = true;
+    notification.read_at = notification.read_at || at;
+}
+
+async function syncHeatOestrusAlerts(notification, updates) {
+    if (notification.type !== 'HEAT_DETECTED' || !notification.cow_id) return;
+
+    await OestrusAlert.updateMany(
+        {
+            farm_id: notification.farm_id,
+            cow_id: notification.cow_id,
+            decision: { $ne: 'NORMAL' },
+            resolved_at: null,
+            dismissed_at: null,
+        },
+        { $set: updates }
+    );
+}
+
+// 3.1 Register Device for Alerts
 exports.registerDevice = asyncHandler(async (req, res) => {
     const { fcm_token, device_os } = req.body;
 
@@ -13,7 +54,6 @@ exports.registerDevice = asyncHandler(async (req, res) => {
 
     const user = await User.findById(req.user._id);
 
-    // Avoid duplicates
     const exists = user.fcm_tokens.some((t) => t.token === fcm_token);
     if (!exists) {
         user.fcm_tokens.push({ token: fcm_token, device_os: device_os || 'android' });
@@ -23,19 +63,23 @@ exports.registerDevice = asyncHandler(async (req, res) => {
     res.json({ status: 'success', message: 'Device registered for notifications' });
 });
 
-// ─── 3.2 Get Notification History ─────────────────────────
-
+// 3.2 Get Notification History
 exports.getNotifications = asyncHandler(async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 50;
+    const filter = {
+        farm_id: req.farmId,
+        resolved_at: null,
+        dismissed_at: null,
+    };
 
-    const notifications = await Notification.find({ farm_id: req.farmId })
+    const notifications = await Notification.find(filter)
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
         .lean();
 
-    const total = await Notification.countDocuments({ farm_id: req.farmId });
+    const total = await Notification.countDocuments(filter);
 
     res.json({
         status: 'success',
@@ -46,8 +90,43 @@ exports.getNotifications = asyncHandler(async (req, res) => {
     });
 });
 
-// ─── 3.3 Notification Settings ────────────────────────────
+exports.markRead = asyncHandler(async (req, res) => {
+    const notification = await findFarmNotification(req, res);
+    if (!notification) return;
 
+    markRead(notification);
+    await notification.save();
+
+    res.json({ status: 'success', data: notification });
+});
+
+exports.resolveNotification = asyncHandler(async (req, res) => {
+    const notification = await findFarmNotification(req, res);
+    if (!notification) return;
+
+    const now = new Date();
+    markRead(notification, now);
+    notification.resolved_at = notification.resolved_at || now;
+    await notification.save();
+    await syncHeatOestrusAlerts(notification, { resolved_at: now });
+
+    res.json({ status: 'success', data: notification });
+});
+
+exports.dismissNotification = asyncHandler(async (req, res) => {
+    const notification = await findFarmNotification(req, res);
+    if (!notification) return;
+
+    const now = new Date();
+    markRead(notification, now);
+    notification.dismissed_at = notification.dismissed_at || now;
+    await notification.save();
+    await syncHeatOestrusAlerts(notification, { dismissed_at: now });
+
+    res.json({ status: 'success', data: notification });
+});
+
+// 3.3 Notification Settings
 exports.updateSettings = asyncHandler(async (req, res) => {
     const { alert_heat, alert_theft, alert_low_battery } = req.body;
 
