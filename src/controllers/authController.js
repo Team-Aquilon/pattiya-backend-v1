@@ -101,6 +101,8 @@ exports.login = asyncHandler(async (req, res) => {
                 id: user._id,
                 name: user.name,
                 role: user.role,
+                profile_image_url: user.profile_image_url || '',
+                image_url: user.profile_image_url || '',
             },
         },
     });
