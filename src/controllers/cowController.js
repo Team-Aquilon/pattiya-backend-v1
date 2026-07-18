@@ -217,6 +217,9 @@ exports.getCow = asyncHandler(async (req, res) => {
         return res.status(404).json({ status: 'error', message: 'Cow not found' });
     }
 
+    const activeHeatStateByCow = await getActiveHeatStateByCow(req.farmId);
+    const effectiveStatus = effectiveDashboardStatus(cow, activeHeatStateByCow);
+
     res.json({
         id: cow.cow_id,
         name: cow.name,
@@ -224,10 +227,12 @@ exports.getCow = asyncHandler(async (req, res) => {
         breed: cow.breed,
         dob: cow.dob,
         weight_kg: cow.weight_kg,
-        status: cow.status,
+        status: effectiveStatus,
         collar_mac: cow.collar_mac,
         battery_percentage: cow.battery_percentage,
         battery_status: cow.battery_status,
+        oestrus_status: activeHeatStateByCow.get(cow.cow_id) || 'NORMAL',
+        has_active_heat_alert: activeHeatStateByCow.has(cow.cow_id),
     });
 });
 
