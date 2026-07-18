@@ -5,6 +5,7 @@ const Cow = require('../models/Cow');
 const HealthEvent = require('../models/HealthEvent');
 const MilkRecord = require('../models/MilkRecord');
 const Farm = require('../models/Farm');
+const OestrusAlert = require('../models/OestrusAlert');
 const { getQueryApi } = require('../config/influxdb');
 const influxService = require('../services/influxService');
 const { publishAddMAC, publishRemoveMAC } = require('../services/mqttHandler');
@@ -493,5 +494,130 @@ exports.getMethaneHistory = asyncHandler(async (req, res) => {
             },
             methane_graph: data_points,
         },
+    });
+});
+
+// ─── NEW: AI Predictions & Oestrus Alerts ─────────────────────
+
+exports.getLatestPredictions = asyncHandler(async (req, res) => {
+    const cow = await Cow.findOne({ cow_id: req.params.cow_id, farm_id: req.farmId });
+    if (!cow) {
+        return res.status(404).json({ status: 'error', message: 'Cow not found' });
+    }
+    if (!cow.collar_mac) {
+        return res.status(400).json({ status: 'error', message: 'No collar paired' });
+    }
+
+    const predictions = await influxService.queryLatestPredictions(cow.collar_mac);
+
+    res.json({
+        status: 'success',
+        data: {
+            cow_id: cow.cow_id,
+            cow_name: cow.name,
+            activity: predictions.activity || null,
+            sound: predictions.sound || null
+        }
+    });
+});
+
+exports.getPredictionHistory = asyncHandler(async (req, res) => {
+    const cow = await Cow.findOne({ cow_id: req.params.cow_id, farm_id: req.farmId });
+    if (!cow) {
+        return res.status(404).json({ status: 'error', message: 'Cow not found' });
+    }
+    if (!cow.collar_mac) {
+        return res.status(400).json({ status: 'error', message: 'No collar paired' });
+    }
+
+    const rangeParam = req.query.range || '24h';
+    const fluxRange = rangeParam.startsWith('-') ? rangeParam : `-${rangeParam}`;
+
+    const [activity_predictions, sound_predictions] = await Promise.all([
+        influxService.queryActivityPredictions(cow.collar_mac, fluxRange),
+        influxService.querySoundPredictions(cow.collar_mac, fluxRange)
+    ]);
+
+    res.json({
+        status: 'success',
+        data: {
+            activity_predictions,
+            sound_predictions
+        }
+    });
+});
+
+exports.getOestrusAlerts = asyncHandler(async (req, res) => {
+    const cow = await Cow.findOne({ cow_id: req.params.cow_id, farm_id: req.farmId });
+    if (!cow) {
+        return res.status(404).json({ status: 'error', message: 'Cow not found' });
+    }
+
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+
+    const total = await OestrusAlert.countDocuments({ farm_id: req.farmId, cow_id: cow.cow_id });
+    const alerts = await OestrusAlert.find({ farm_id: req.farmId, cow_id: cow.cow_id })
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean();
+
+    res.json({
+        status: 'success',
+        data: {
+            alerts,
+            pagination: {
+                page,
+                limit,
+                total,
+                pages: Math.ceil(total / limit)
+            }
+        }
+    });
+});
+
+exports.getActiveOestrusAlerts = asyncHandler(async (req, res) => {
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const alerts = await OestrusAlert.find({
+        farm_id: req.farmId,
+        decision: { $ne: 'NORMAL' },
+        createdAt: { $gte: twentyFourHoursAgo }
+    })
+        .sort({ createdAt: -1 })
+        .lean();
+
+    const latestAlertsMap = {};
+    for (const alert of alerts) {
+        if (!latestAlertsMap[alert.cow_id]) {
+            latestAlertsMap[alert.cow_id] = alert;
+        }
+    }
+
+    const activeAlertsList = Object.values(latestAlertsMap);
+
+    const cowIds = activeAlertsList.map(a => a.cow_id);
+    const cows = await Cow.find({ farm_id: req.farmId, cow_id: { $in: cowIds } }).select('cow_id name').lean();
+    
+    const cowMap = {};
+    for (const cow of cows) {
+        cowMap[cow.cow_id] = cow.name;
+    }
+
+    const formattedAlerts = activeAlertsList.map(a => ({
+        cow_id: a.cow_id,
+        cow_name: cowMap[a.cow_id] || 'Unknown',
+        decision: a.decision,
+        sound_label: a.sound_label,
+        activity_state: a.activity_state,
+        created_at: a.createdAt
+    }));
+
+    res.json({
+        status: 'success',
+        data: {
+            active_alerts: formattedAlerts
+        }
     });
 });

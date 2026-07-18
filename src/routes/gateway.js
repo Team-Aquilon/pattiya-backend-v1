@@ -13,4 +13,13 @@ router.post('/telemetry/activity/batch', gatewayAuth, gatewayController.batchAct
 router.get('/settings/geofence', gatewayAuth, gatewayController.getGeofence);
 router.post('/alerts/emergency', gatewayAuth, gatewayController.emergencyAlert);
 
+router.post('/telemetry/activity-prediction', gatewayAuth, gatewayController.activityPrediction);
+router.post('/telemetry/sound-prediction', gatewayAuth, gatewayController.soundPrediction);
+router.post('/telemetry/environment', gatewayAuth, gatewayController.environmentReading);
+router.post('/telemetry/status', gatewayAuth, gatewayController.statusHeartbeat);
+router.post('/telemetry/oestrus-fusion', gatewayAuth, gatewayController.oestrusFusion);
+
+router.post('/telemetry/methane/sample', gatewayAuth, gatewayController.methaneSample);
+router.post('/telemetry/methane/session', gatewayAuth, gatewayController.methaneSession);
+
 module.exports = router;
