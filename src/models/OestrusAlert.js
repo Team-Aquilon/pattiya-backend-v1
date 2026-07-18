@@ -67,6 +67,24 @@ const oestrusAlertSchema = new mongoose.Schema(
     }
 );
 
+oestrusAlertSchema.pre('save', function setRealtimeAction(next) {
+    if (this.isNew) {
+        this.$locals.realtimeAction = 'created';
+    } else if (this.isModified('resolved_at') && this.resolved_at) {
+        this.$locals.realtimeAction = 'resolved';
+    } else if (this.isModified('dismissed_at') && this.dismissed_at) {
+        this.$locals.realtimeAction = 'dismissed';
+    } else {
+        this.$locals.realtimeAction = 'updated';
+    }
+    next();
+});
+
+oestrusAlertSchema.post('save', function emitRealtimeAlert(doc) {
+    if (doc.decision === 'NORMAL') return;
+    const { emitOestrusAlert } = require('../services/socketService');
+    emitOestrusAlert(doc.$locals.realtimeAction || 'updated', doc);
+});
 // Indexes
 oestrusAlertSchema.index({ farm_id: 1, decision: 1, createdAt: -1 });
 oestrusAlertSchema.index({ farm_id: 1, cow_id: 1, createdAt: -1 });
