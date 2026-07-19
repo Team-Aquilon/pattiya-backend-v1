@@ -160,8 +160,20 @@ function emitOestrusAlert(action, alert) {
     });
 }
 
+function emitFarmUpdate(farmId, payload = {}) {
+    if (!farmId) return;
+
+    emitToFarm(farmId, 'farm:updated', {
+        action: payload.action || 'updated',
+        source: payload.source || 'backend',
+        entity: payload.entity || 'farm',
+        ...payload,
+    });
+}
+
 module.exports = {
     initSocketServer,
     emitNotificationAlert,
     emitOestrusAlert,
+    emitFarmUpdate,
 };

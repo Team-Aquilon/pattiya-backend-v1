@@ -9,14 +9,15 @@ const OestrusAlert = require('../models/OestrusAlert');
 const MethaneSession = require('../models/MethaneSession');
 const influxService = require('../services/influxService');
 const fcmService = require('../services/fcmService');
+const { emitFarmUpdate } = require('../services/socketService');
 const { calculateTHI, classifyTHI } = require('../utils/thi');
 const asyncHandler = require('../middleware/asyncHandler');
 
-// ─── Thresholds ───────────────────────────────────────────
+// ????????? Thresholds ?????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
 const METHANE_DANGER_THRESHOLD = 600;
 const THI_ALERT_THRESHOLD = 72;
 
-// ─── 1.1 Gateway Boot Login ───────────────────────────────
+// ????????? 1.1 Gateway Boot Login ?????????????????????????????????????????????????????????????????????????????????????????????
 
 exports.gatewayLogin = asyncHandler(async (req, res) => {
     const { gateway_id, hardware_secret } = req.body;
@@ -54,7 +55,7 @@ exports.gatewayLogin = asyncHandler(async (req, res) => {
     });
 });
 
-// ─── 2.1 Sync Allowed MAC Addresses ──────────────────────
+// ????????? 2.1 Sync Allowed MAC Addresses ??????????????????????????????????????????????????????????????????
 
 exports.getWhitelist = asyncHandler(async (req, res) => {
     const cows = await Cow.find({ farm_id: req.farmId, is_active: true, collar_mac: { $ne: '' } })
@@ -69,10 +70,10 @@ exports.getWhitelist = asyncHandler(async (req, res) => {
     });
 });
 
-// ─── 2.2 Batch Vitals Telemetry ──────────────────────────
+// ????????? 2.2 Batch Vitals Telemetry ??????????????????????????????????????????????????????????????????????????????
 //
 //  Architecture: Fast Path vs Slow Path
-//  ──────────────────────────────────────
+//  ??????????????????????????????????????????????????????????????????????????????????????????????????????????????????
 //  FAST PATH (non-blocking): InfluxDB batch write via influxService
 //  SLOW PATH (async background): MongoDB cow updates + methane alerts
 //
@@ -88,13 +89,13 @@ exports.batchVitals = asyncHandler(async (req, res) => {
 
     const farmId = req.farmId;
 
-    // ── FAST PATH: InfluxDB write (time-series) ──────────
+    // ?????? FAST PATH: InfluxDB write (time-series) ??????????????????????????????
     await influxService.writeVitalsBatch(farmId, gateway_id, records);
 
-    // ── Respond immediately to the gateway ───────────────
+    // ?????? Respond immediately to the gateway ?????????????????????????????????????????????
     res.json({ status: 'success', message: 'Batch processed successfully' });
 
-    // ── SLOW PATH: MongoDB updates + health checks (background) ──
+    // ?????? SLOW PATH: MongoDB updates + health checks (background) ??????
     //    These run AFTER the response is sent. Not awaited.
     setImmediate(async () => {
         try {
@@ -108,8 +109,8 @@ exports.batchVitals = asyncHandler(async (req, res) => {
 /**
  * Background processing for each cow in the vitals batch:
  *  1. Update live state in MongoDB (battery, location, last_update)
- *  2. Evaluate methane threshold → alert if > 600 PPM
- *  3. Extract DHT22 environment data → InfluxDB + THI alert if > 72
+ *  2. Evaluate methane threshold ??? alert if > 600 PPM
+ *  3. Extract DHT22 environment data ??? InfluxDB + THI alert if > 72
  */
 async function processVitalsBackground(farmId, gatewayId, records) {
     const methaneAlerts = []; // Collect cows exceeding threshold
@@ -117,7 +118,7 @@ async function processVitalsBackground(farmId, gatewayId, records) {
     for (const record of records) {
         const { mac_address, timestamp, vitals, gps } = record;
 
-        // ── 1. Update cow's live state in MongoDB ────────
+        // ?????? 1. Update cow's live state in MongoDB ????????????????????????
         const updateData = { last_update: new Date(timestamp) };
 
         if (vitals) {
@@ -143,7 +144,7 @@ async function processVitalsBackground(farmId, gatewayId, records) {
             { new: true }
         );
 
-        // ── 2. Methane threshold check ───────────────────
+        // ?????? 2. Methane threshold check ?????????????????????????????????????????????????????????
         if (vitals && vitals.methane_ppm > METHANE_DANGER_THRESHOLD && cow) {
             methaneAlerts.push({
                 cow,
@@ -153,12 +154,12 @@ async function processVitalsBackground(farmId, gatewayId, records) {
         }
     }
 
-    // ── 3. Fire methane alerts (batched for efficiency) ──
+    // ?????? 3. Fire methane alerts (batched for efficiency) ??????
     for (const alert of methaneAlerts) {
         await handleHighMethaneAlert(farmId, alert.cow, alert.methane_ppm, alert.timestamp);
     }
 
-    // ── 4. Environment data (DHT22 on the Base Station) ──────
+    // ?????? 4. Environment data (DHT22 on the Base Station) ??????????????????
     //    The gateway sends ambient_temperature and ambient_humidity
     //    at the batch level (same for all records in the batch).
     //    We extract from the first record that has vitals.
@@ -174,8 +175,14 @@ async function processVitalsBackground(farmId, gatewayId, records) {
             await influxService.writeEnvironmentData(
                 farmId, gatewayId, temperature, humidity, thi, batchTimestamp
             );
+            emitFarmUpdate(farmId, {
+                action: 'updated',
+                source: 'gateway_vitals',
+                entity: 'environment',
+                gateway_id: gatewayId,
+            });
 
-            console.log(`[Gateway] 🌡️  Farm ${farmId}: Temp=${temperature}°C, RH=${humidity}%, THI=${thi} (${thiClass.level})`);
+            console.log(`[Gateway] ???????  Farm ${farmId}: Temp=${temperature}??C, RH=${humidity}%, THI=${thi} (${thiClass.level})`);
 
             // Alert if THI exceeds threshold
             if (thi > THI_ALERT_THRESHOLD && thiClass.alert) {
@@ -192,7 +199,7 @@ async function processVitalsBackground(farmId, gatewayId, records) {
  *  - Fire FCM push to the farmer
  */
 async function handleHighMethaneAlert(farmId, cow, methanePpm, timestamp) {
-    console.log(`[Gateway] ⚠️  HIGH METHANE: ${cow.name} (${cow.cow_id}) → ${methanePpm} PPM`);
+    console.log(`[Gateway] ??????  HIGH METHANE: ${cow.name} (${cow.cow_id}) ??? ${methanePpm} PPM`);
 
     // Mark cow as SICK if not already in a higher-priority state
     if (cow.status === 'HEALTHY' || cow.status === 'OFFLINE') {
@@ -215,16 +222,16 @@ async function handleHighMethaneAlert(farmId, cow, methanePpm, timestamp) {
         farm_id: farmId,
         cow_id: cow.cow_id,
         type: 'SYSTEM',
-        title: '⚠️ High Methane Warning',
-        message: `${cow.name} (${cow.cow_id}) is emitting ${methanePpm} PPM methane — possible digestive bloat! Check immediately.`,
+        title: '?????? High Methane Warning',
+        message: `${cow.name} (${cow.cow_id}) is emitting ${methanePpm} PPM methane ??? possible digestive bloat! Check immediately.`,
         severity: 'HIGH',
         data: { methane_ppm: methanePpm, threshold: METHANE_DANGER_THRESHOLD },
     });
 
     // FCM push notification
     await fcmService.sendToFarm(farmId, {
-        title: `⚠️ High Methane: ${cow.name}`,
-        body: `${methanePpm} PPM detected — possible digestive bloat!`,
+        title: `?????? High Methane: ${cow.name}`,
+        body: `${methanePpm} PPM detected ??? possible digestive bloat!`,
         data: {
             type: 'HIGH_METHANE_WARNING',
             cow_id: cow.cow_id,
@@ -240,15 +247,15 @@ async function handleHighMethaneAlert(farmId, cow, methanePpm, timestamp) {
  *  - Fire FCM push advising the farmer to activate cooling
  */
 async function handleHeatStressAlert(farmId, temperature, humidity, thi, thiClass) {
-    console.log(`[Gateway] 🔥 HEAT STRESS: Farm ${farmId} → THI=${thi} (${thiClass.level})`);
+    console.log(`[Gateway] ???? HEAT STRESS: Farm ${farmId} ??? THI=${thi} (${thiClass.level})`);
 
     // Log notification (farm-level, no specific cow)
     const notification = await Notification.create({
         farm_id: farmId,
         cow_id: '',
         type: 'SYSTEM',
-        title: `🔥 Heat Stress Warning: ${thiClass.level}`,
-        message: `THI=${thi} (${temperature}°C / ${humidity}% RH). ${thiClass.description}. Activate fans and sprinklers immediately!`,
+        title: `???? Heat Stress Warning: ${thiClass.level}`,
+        message: `THI=${thi} (${temperature}??C / ${humidity}% RH). ${thiClass.description}. Activate fans and sprinklers immediately!`,
         severity: thiClass.level === 'DANGER' ? 'CRITICAL' : 'HIGH',
         data: {
             alert_type: 'FARM_HEAT_STRESS_WARNING',
@@ -261,8 +268,8 @@ async function handleHeatStressAlert(farmId, temperature, humidity, thi, thiClas
 
     // FCM push notification
     await fcmService.sendToFarm(farmId, {
-        title: `🔥 Heat Stress: THI ${thi}`,
-        body: `${thiClass.description} (${temperature}°C / ${humidity}% RH). Turn on cooling systems!`,
+        title: `???? Heat Stress: THI ${thi}`,
+        body: `${thiClass.description} (${temperature}??C / ${humidity}% RH). Turn on cooling systems!`,
         data: {
             type: 'FARM_HEAT_STRESS_WARNING',
             thi: String(thi),
@@ -272,7 +279,7 @@ async function handleHeatStressAlert(farmId, temperature, humidity, thi, thiClas
     });
 }
 
-// ─── 2.3 Batch Activity Telemetry ─────────────────────────
+// ????????? 2.3 Batch Activity Telemetry ???????????????????????????????????????????????????????????????????????????
 
 exports.batchActivity = asyncHandler(async (req, res) => {
     const { gateway_id, batch_timestamp, records } = req.body;
@@ -287,7 +294,7 @@ exports.batchActivity = asyncHandler(async (req, res) => {
     res.json({ status: 'success', message: 'Activity batch processed' });
 });
 
-// ─── 2.4 Fetch Geofence Boundaries ───────────────────────
+// ????????? 2.4 Fetch Geofence Boundaries ?????????????????????????????????????????????????????????????????????
 
 exports.getGeofence = asyncHandler(async (req, res) => {
     const farm = await Farm.findOne({ farm_id: req.farmId });
@@ -305,7 +312,7 @@ exports.getGeofence = asyncHandler(async (req, res) => {
     });
 });
 
-// ─── 11.5 Emergency Edge Alert ────────────────────────────
+// ????????? 11.5 Emergency Edge Alert ????????????????????????????????????????????????????????????????????????????????????
 
 exports.emergencyAlert = asyncHandler(async (req, res) => {
     const { gateway_id, mac_address, alert_type, timestamp, trigger_data } = req.body;
@@ -328,14 +335,14 @@ exports.emergencyAlert = asyncHandler(async (req, res) => {
         farm_id: farmId,
         cow_id: cow ? cow.cow_id : '',
         type: 'GEOFENCE_BREACH',
-        title: '🚨 Geofence Breach Alert',
+        title: '???? Geofence Breach Alert',
         message: `${cow ? cow.name : mac_address} has left the farm boundary! Distance: ${trigger_data?.distance_from_center_meters || 'unknown'}m`,
         severity: 'CRITICAL',
         data: { alert_type, trigger_data, gateway_id },
     });
 
     await fcmService.sendToFarm(farmId, {
-        title: '🚨 Geofence Breach Alert',
+        title: '???? Geofence Breach Alert',
         body: `${cow ? cow.name : 'A cow'} has breached the farm boundary!`,
         data: { type: 'GEOFENCE_BREACH', cow_id: cow?.cow_id || '', notification_id: notification._id.toString() },
     });
@@ -343,7 +350,7 @@ exports.emergencyAlert = asyncHandler(async (req, res) => {
     res.json({ status: 'alert_received', action_taken: 'FCM_Push_Notification_Triggered' });
 });
 
-// ─── 11.6 Multimodal AI Telemetry Endpoints ──────────────
+// ????????? 11.6 Multimodal AI Telemetry Endpoints ??????????????????????????????????????????
 
 exports.activityPrediction = asyncHandler(async (req, res) => {
     const { gateway_id, cow_id, mac_address, timestamp, features, predicted_activity, activity_state, confidence, battery, rssi_dbm, snr_db } = req.body;
@@ -386,6 +393,12 @@ exports.environmentReading = asyncHandler(async (req, res) => {
     if (valid) {
         thi = calculateTHI(temperature_c, humidity_percent);
         await influxService.writeEnvironmentData(req.farmId, gateway_id, temperature_c, humidity_percent, thi, timestamp || new Date().toISOString());
+        emitFarmUpdate(req.farmId, {
+            action: 'updated',
+            source: 'environment_reading',
+            entity: 'environment',
+            gateway_id,
+        });
         
         if (thi > THI_ALERT_THRESHOLD) {
             const thiClass = classifyTHI(thi);
@@ -471,7 +484,7 @@ exports.oestrusFusion = asyncHandler(async (req, res) => {
             });
             
             await fcmService.sendToFarm(req.farmId, {
-                title: '🔥 Heat Detected',
+                title: '???? Heat Detected',
                 body: `${cow.name || cow.cow_id} is likely in oestrus based on multimodal fusion.`,
                 data: {
                     type: 'HEAT_DETECTED',
@@ -486,7 +499,7 @@ exports.oestrusFusion = asyncHandler(async (req, res) => {
             farm_id: req.farmId,
             cow_id: cow ? cow.cow_id : cow_id,
             type: 'HEAT_DETECTED',
-            title: '👀 Oestrus Watch',
+            title: '???? Oestrus Watch',
             message: `${cow ? cow.name : cow_id} is showing some signs of oestrus. Keep watching.`,
             severity: 'MEDIUM',
             data: { decision }
@@ -499,6 +512,12 @@ exports.oestrusFusion = asyncHandler(async (req, res) => {
 exports.methaneSample = asyncHandler(async (req, res) => {
     const { gateway_id } = req.body;
     await influxService.writeMethaneSample(req.farmId, gateway_id, req.body);
+    emitFarmUpdate(req.farmId, {
+        action: 'updated',
+        source: 'methane_sample',
+        entity: 'methane',
+        gateway_id,
+    });
     res.json({ status: 'success', message: 'Methane sample stored' });
 });
 
@@ -508,6 +527,13 @@ exports.methaneSession = asyncHandler(async (req, res) => {
     await MethaneSession.create({
         farm_id: req.farmId,
         ...req.body
+    });
+    emitFarmUpdate(req.farmId, {
+        action: 'updated',
+        source: 'methane_session',
+        entity: 'methane',
+        gateway_id,
+        cow_id,
     });
 
     if (avg_delta_ch4_ppm > 600) {

@@ -91,6 +91,30 @@ const cowSchema = new mongoose.Schema(
     }
 );
 
+cowSchema.pre('save', function setRealtimeAction(next) {
+    this.$locals.realtimeAction = this.isNew ? 'created' : 'updated';
+    next();
+});
+
+function emitCowUpdate(doc, action = 'updated') {
+    if (!doc || !doc.farm_id) return;
+
+    const { emitFarmUpdate } = require('../services/socketService');
+    emitFarmUpdate(doc.farm_id, {
+        action: doc.$locals?.realtimeAction || action,
+        source: 'cow',
+        entity: 'cow',
+        cow_id: doc.cow_id,
+    });
+}
+
+cowSchema.post('save', function emitRealtimeCowUpdate(doc) {
+    emitCowUpdate(doc);
+});
+
+cowSchema.post('findOneAndUpdate', function emitRealtimeCowFindOneUpdate(doc) {
+    emitCowUpdate(doc, 'updated');
+});
 // Indexes for queries
 cowSchema.index({ farm_id: 1, status: 1 });
 cowSchema.index({ farm_id: 1, collar_mac: 1 });
