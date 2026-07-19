@@ -24,3 +24,5 @@ build/
 # Firebase credentials
 google-services.json
 firebase-service-account.json
+
+docs/
