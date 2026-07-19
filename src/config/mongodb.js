@@ -48,8 +48,8 @@ async function connectMongoDB({ exitOnFailure = false } = {}) {
         return connectionPromise || mongoose.connection.asPromise();
     }
 
-    if (config.server.env === 'production' && !process.env.MONGODB_URI) {
-        throw new Error('MONGODB_URI is required in production');
+    if (config.mongo.required && !process.env.MONGODB_URI) {
+        throw new Error('MONGODB_URI is required because MONGODB_REQUIRED is true');
     }
 
     connectionPromise = mongoose.connect(config.mongo.uri, {
@@ -66,7 +66,7 @@ async function connectMongoDB({ exitOnFailure = false } = {}) {
             connectionPromise = null;
             console.error('[MongoDB] Connection failed:', err.message);
 
-            if (exitOnFailure && config.server.env === 'production') {
+            if (exitOnFailure && config.mongo.required) {
                 process.exit(1);
             }
 
@@ -77,3 +77,4 @@ async function connectMongoDB({ exitOnFailure = false } = {}) {
 }
 
 module.exports = { connectMongoDB };
+

@@ -8,7 +8,8 @@
     "dev": "nodemon src/server.js",
     "seed": "node scripts/seed.js",
     "lint": "eslint src/ scripts/ api/ index.js",
-    "check": "node --check src/server.js && node --check src/app.js && node --check src/config/index.js"
+    "check": "node --check src/server.js && node --check src/app.js && node --check src/config/index.js && node --check scripts/ec2-doctor.js",
+    "doctor:ec2": "node scripts/ec2-doctor.js"
   },
   "keywords": [
     "iot",
