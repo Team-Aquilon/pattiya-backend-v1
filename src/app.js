@@ -3,6 +3,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const compression = require('compression');
+const mongoose = require('mongoose');
 const config = require('./config');
 
 // Route modules
@@ -70,8 +71,26 @@ function healthHandler(_req, res) {
     });
 }
 
+function readinessHandler(_req, res) {
+    const mongoConnected = mongoose.connection.readyState === 1;
+    const statusCode = mongoConnected || !config.mongo.required ? 200 : 503;
+
+    res.status(statusCode).json({
+        status: statusCode === 200 ? 'ok' : 'degraded',
+        service: 'pattiya-backend',
+        mongo: {
+            connected: mongoConnected,
+            readyState: mongoose.connection.readyState,
+            required: config.mongo.required,
+        },
+        timestamp: new Date().toISOString(),
+    });
+}
+
 app.get('/api/v1/health', healthHandler);
 app.get('/v1/health', healthHandler);
+app.get('/api/v1/ready', readinessHandler);
+app.get('/v1/ready', readinessHandler);
 
 const ensureMongoDB = async (_req, res, next) => {
     try {
@@ -123,3 +142,4 @@ app.use((err, _req, res, _next) => {
 });
 
 module.exports = app;
+

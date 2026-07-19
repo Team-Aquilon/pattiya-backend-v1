@@ -22,13 +22,15 @@ function parseInteger(value, defaultValue) {
   return Number.isFinite(parsed) ? parsed : defaultValue;
 }
 
+const runtimeEnv = process.env.NODE_ENV || 'development';
+const isProduction = runtimeEnv === 'production';
 const port = parseInteger(process.env.PORT, 5000);
 
 const config = Object.freeze({
   server: {
     port,
     host: process.env.HOST || '0.0.0.0',
-    env: process.env.NODE_ENV || 'development',
+    env: runtimeEnv,
     publicBaseUrl: process.env.PUBLIC_BASE_URL || `http://localhost:${port}`,
     trustProxy: parseBoolean(process.env.TRUST_PROXY, false),
   },
@@ -39,6 +41,7 @@ const config = Object.freeze({
 
   mongo: {
     uri: process.env.MONGODB_URI || 'mongodb://localhost:27017/pattiya',
+    required: parseBoolean(process.env.MONGODB_REQUIRED, isProduction),
   },
 
   influx: {
@@ -82,3 +85,4 @@ const config = Object.freeze({
 });
 
 module.exports = config;
+

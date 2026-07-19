@@ -71,6 +71,20 @@ function describeListenError(err) {
     return `[Server] Failed to listen on ${config.server.host}:${config.server.port}: ${err.message}`;
 }
 
+async function connectPrimaryDatabase() {
+    try {
+        await connectMongoDB({ exitOnFailure: false });
+        return true;
+    } catch (err) {
+        if (config.mongo.required) {
+            throw err;
+        }
+
+        console.warn('[MongoDB] Startup connection failed:', err.message);
+        console.warn('[MongoDB] Continuing because MONGODB_REQUIRED=false. Database-backed routes will return 503 until MongoDB is reachable.');
+        return false;
+    }
+}
 async function startOptionalServices() {
     await pingInfluxDB();
 
@@ -133,7 +147,7 @@ function registerShutdown(server) {
 async function startServer() {
     logStartupBanner();
 
-    await connectMongoDB({ exitOnFailure: false });
+    await connectPrimaryDatabase();
     await startOptionalServices();
 
     const server = http.createServer(app);
@@ -162,3 +176,5 @@ startServer().catch((err) => {
 });
 
 module.exports = { startServer };
+
+

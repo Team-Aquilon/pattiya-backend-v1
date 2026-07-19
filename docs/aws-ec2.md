@@ -22,6 +22,7 @@ PUBLIC_BASE_URL=https://api.example.com
 TRUST_PROXY=true
 CORS_ORIGINS=https://app.example.com
 MONGODB_URI=mongodb+srv://USER:PASSWORD@HOST/pattiya
+MONGODB_REQUIRED=true
 JWT_SECRET=replace_with_a_long_random_secret
 JWT_REFRESH_SECRET=replace_with_a_different_long_random_secret
 ```
@@ -84,3 +85,42 @@ sudo systemctl reload nginx
 ```
 
 Open EC2 security group ports 80 and 443. Only open port 5000 directly for temporary debugging.
+
+## Fix Nginx `connect() failed (111: Connection refused)`
+
+This error means Nginx is running, but the Node backend is not accepting connections at the configured upstream, usually `127.0.0.1:5000`.
+
+Run these on the EC2 instance:
+
+```bash
+cd /path/to/pattiya-backend-v1
+npm run doctor:ec2
+ss -ltnp | grep :5000
+pm2 status
+pm2 logs pattiya-backend --lines 100
+```
+
+Common fixes:
+
+```bash
+# Start or restart the backend
+pm2 start ecosystem.config.cjs --env production
+pm2 restart pattiya-backend --update-env
+
+# Confirm Node is listening locally
+curl http://127.0.0.1:5000/api/v1/health
+curl http://127.0.0.1:5000/api/v1/ready
+
+# Reload Nginx after proxy changes
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+If PM2 logs show `MONGODB_URI is required`, set `MONGODB_URI` in `.env`. For temporary debugging only, you can keep the HTTP health endpoint online while fixing MongoDB with:
+
+```env
+MONGODB_REQUIRED=false
+```
+
+When MongoDB is working, set it back to `true` in production.
+
