@@ -148,7 +148,6 @@ async function startServer() {
     logStartupBanner();
 
     await connectPrimaryDatabase();
-    await startOptionalServices();
 
     const server = http.createServer(app);
     initSocketServer(server);
@@ -168,6 +167,8 @@ async function startServer() {
     console.log(`[Server] Health check -> ${config.server.publicBaseUrl}/api/v1/health\n`);
     logRoutes();
     registerShutdown(server);
+
+    await startOptionalServices();
 }
 
 startServer().catch((err) => {
@@ -176,5 +177,6 @@ startServer().catch((err) => {
 });
 
 module.exports = { startServer };
+
 
 
