@@ -37,7 +37,7 @@ const server = http.createServer((req, res) => {
 });
 
 initSocketServer(server, {
-    path: process.env.SOCKET_IO_PATH || '/socket.io',
+    path: process.env.SOCKET_IO_PATH || '/api/socket.io',
 });
 
 server.prependListener('request', normalizeVercelUrl);
