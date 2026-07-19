@@ -1,2 +1,2 @@
-module.exports = require('../src/app');
+module.exports = require('../src/vercelServer');
 module.exports.default = module.exports;
