@@ -18,6 +18,12 @@ function serialize(value) {
     return JSON.parse(JSON.stringify(raw));
 }
 
+function isOriginAllowed(origin) {
+    if (!origin) return true;
+    if (config.cors.origins.includes('*')) return true;
+    return config.cors.origins.includes(origin);
+}
+
 function getSocketToken(socket) {
     const authToken = socket.handshake.auth && socket.handshake.auth.token;
     if (authToken) return authToken;
@@ -37,7 +43,9 @@ function initSocketServer(server, options = {}) {
     io = new Server(server, {
         path: socketPath,
         cors: {
-            origin: '*',
+            origin(origin, callback) {
+                callback(null, isOriginAllowed(origin));
+            },
             methods: ['GET', 'POST'],
         },
     });
@@ -61,7 +69,7 @@ function initSocketServer(server, options = {}) {
             socket.data.userId = decoded.userId;
             socket.data.farmId = decoded.farmId;
             return next();
-        } catch (error) {
+        } catch {
             return next(new Error('Invalid socket token'));
         }
     });

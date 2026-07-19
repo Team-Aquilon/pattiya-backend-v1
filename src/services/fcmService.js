@@ -3,17 +3,26 @@ const config = require('../config');
 const User = require('../models/User');
 
 let firebaseInitialized = false;
+let missingCredentialsLogged = false;
 
-/**
- * Initialize Firebase Admin SDK.
- * Silently skips if credentials are not configured.
- */
+function hasFirebaseCredentials() {
+    return Boolean(config.firebase.projectId && config.firebase.clientEmail && config.firebase.privateKey);
+}
+
 function initFirebase() {
-    if (firebaseInitialized) return;
+    if (firebaseInitialized) return true;
 
-    if (!config.firebase.projectId || !config.firebase.clientEmail || !config.firebase.privateKey) {
-        console.warn('[FCM] ⚠️  Firebase credentials not configured — push notifications disabled');
-        return;
+    if (admin.apps.length > 0) {
+        firebaseInitialized = true;
+        return true;
+    }
+
+    if (!hasFirebaseCredentials()) {
+        if (!missingCredentialsLogged) {
+            console.warn('[FCM] Firebase credentials not configured - push notifications disabled');
+            missingCredentialsLogged = true;
+        }
+        return false;
     }
 
     try {
@@ -25,28 +34,25 @@ function initFirebase() {
             }),
         });
         firebaseInitialized = true;
-        console.log('[FCM] ✅ Firebase Admin SDK initialized');
+        console.log('[FCM] Firebase Admin SDK initialized');
+        return true;
     } catch (err) {
-        console.error('[FCM] ❌ Firebase init failed:', err.message);
+        console.error('[FCM] Firebase init failed:', err.message);
+        return false;
     }
 }
 
-/**
- * Send a push notification to all registered devices for a farm.
- */
 async function sendToFarm(farmId, { title, body, data = {} }) {
-    if (!firebaseInitialized) {
-        console.log(`[FCM] (skipped) → ${title}: ${body}`);
+    if (!firebaseInitialized && !initFirebase()) {
+        console.log(`[FCM] (skipped) -> ${title}: ${body}`);
         return;
     }
 
     try {
-        // Get all users in this farm who have FCM tokens
         const users = await User.find({ farm_id: farmId, is_active: true, 'fcm_tokens.0': { $exists: true } });
 
         const tokens = [];
         for (const user of users) {
-            // Check notification preferences
             if (data.type === 'HEAT_DETECTED' && !user.notification_settings.alert_heat) continue;
             if (data.type === 'GEOFENCE_BREACH' && !user.notification_settings.alert_theft) continue;
             if (data.type === 'LOW_BATTERY' && !user.notification_settings.alert_low_battery) continue;
@@ -61,22 +67,20 @@ async function sendToFarm(farmId, { title, body, data = {} }) {
             return;
         }
 
-        // Send multicast
         const message = {
             notification: { title, body },
-            data: Object.fromEntries(Object.entries(data).map(([k, v]) => [k, String(v)])),
+            data: Object.fromEntries(Object.entries(data).map(([key, value]) => [key, String(value)])),
             tokens,
         };
 
         const response = await admin.messaging().sendEachForMulticast(message);
         console.log(`[FCM] Sent to ${response.successCount}/${tokens.length} devices`);
 
-        // Clean up invalid tokens
         if (response.failureCount > 0) {
             const invalidTokens = [];
             response.responses.forEach((resp, idx) => {
-                if (resp.error && (resp.error.code === 'messaging/invalid-registration-token' ||
-                    resp.error.code === 'messaging/registration-token-not-registered')) {
+                if (resp.error && (resp.error.code === 'messaging/invalid-registration-token'
+                    || resp.error.code === 'messaging/registration-token-not-registered')) {
                     invalidTokens.push(tokens[idx]);
                 }
             });

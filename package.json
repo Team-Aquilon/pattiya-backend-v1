@@ -7,7 +7,8 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "seed": "node scripts/seed.js",
-    "lint": "eslint src/"
+    "lint": "eslint src/ scripts/ api/ index.js",
+    "check": "node --check src/server.js && node --check src/app.js && node --check src/config/index.js"
   },
   "keywords": [
     "iot",
@@ -41,5 +42,8 @@
   "devDependencies": {
     "eslint": "^9.17.0",
     "nodemon": "^3.1.9"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
