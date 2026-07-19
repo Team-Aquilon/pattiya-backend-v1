@@ -26,8 +26,16 @@ const app = express();
 
 // --------------- Global Middleware ---------------
 
+const corsOptions = {
+    origin: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Gateway-Token'],
+    optionsSuccessStatus: 204,
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(helmet());
-app.use(cors());
 app.use(compression());
 app.use(morgan('dev'));
 app.use(express.json({ limit: '5mb' }));
