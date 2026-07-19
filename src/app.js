@@ -59,7 +59,7 @@ app.get('/', (_req, res) => {
     });
 });
 
-app.get('/favicon.ico', (_req, res) => {
+app.get(['/favicon.ico', '/favicon.png'], (_req, res) => {
     res.status(204).end();
 });
 
