@@ -4,10 +4,37 @@ const path = require('path');
 // Load .env from project root
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
+function parseBoolean(value, defaultValue = false) {
+  if (value === undefined || value === null || value === '') return defaultValue;
+  return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
+}
+
+function parseList(value, defaultValue = []) {
+  if (!value) return defaultValue;
+  return String(value)
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parseInteger(value, defaultValue) {
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : defaultValue;
+}
+
+const port = parseInteger(process.env.PORT, 5000);
+
 const config = Object.freeze({
   server: {
-    port: parseInt(process.env.PORT, 10) || 5000,
+    port,
+    host: process.env.HOST || '0.0.0.0',
     env: process.env.NODE_ENV || 'development',
+    publicBaseUrl: process.env.PUBLIC_BASE_URL || `http://localhost:${port}`,
+    trustProxy: parseBoolean(process.env.TRUST_PROXY, false),
+  },
+
+  cors: {
+    origins: parseList(process.env.CORS_ORIGINS, ['*']),
   },
 
   mongo: {
@@ -19,12 +46,18 @@ const config = Object.freeze({
     token: process.env.INFLUXDB_TOKEN || '',
     org: process.env.INFLUXDB_ORG || 'pattiya',
     bucket: process.env.INFLUXDB_BUCKET || 'sensor_data',
+    required: parseBoolean(process.env.INFLUXDB_REQUIRED, false),
   },
 
   mqtt: {
+    enabled: parseBoolean(process.env.MQTT_ENABLED, true),
     brokerUrl: process.env.MQTT_BROKER_URL || 'mqtt://localhost:1883',
     username: process.env.MQTT_USERNAME || '',
     password: process.env.MQTT_PASSWORD || '',
+  },
+
+  heatCron: {
+    enabled: parseBoolean(process.env.HEAT_CRON_ENABLED, true),
   },
 
   jwt: {

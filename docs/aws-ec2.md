@@ -1,0 +1,86 @@
+# AWS EC2 Hosting Guide
+
+This backend runs as a long-lived Node/Express process on EC2. Use PM2 or systemd to keep it alive, and put Nginx or an AWS load balancer in front for ports 80/443.
+
+## Runtime
+
+Use Node.js 20 or newer. The dependency tree includes packages that require Node 20+.
+
+```bash
+npm ci --omit=dev
+cp .env.example .env
+nano .env
+```
+
+Minimum production values:
+
+```env
+NODE_ENV=production
+HOST=0.0.0.0
+PORT=5000
+PUBLIC_BASE_URL=https://api.example.com
+TRUST_PROXY=true
+CORS_ORIGINS=https://app.example.com
+MONGODB_URI=mongodb+srv://USER:PASSWORD@HOST/pattiya
+JWT_SECRET=replace_with_a_long_random_secret
+JWT_REFRESH_SECRET=replace_with_a_different_long_random_secret
+```
+
+If InfluxDB or MQTT are not ready yet, keep the API online with:
+
+```env
+INFLUXDB_REQUIRED=false
+MQTT_ENABLED=false
+HEAT_CRON_ENABLED=false
+```
+
+Turn them back on after those services are reachable.
+
+## PM2
+
+```bash
+npm install -g pm2
+pm2 start ecosystem.config.cjs --env production
+pm2 save
+pm2 startup systemd
+```
+
+Useful checks:
+
+```bash
+pm2 status
+pm2 logs pattiya-backend
+curl http://127.0.0.1:5000/api/v1/health
+```
+
+## Nginx Reverse Proxy
+
+Example `/etc/nginx/sites-available/pattiya-backend`:
+
+```nginx
+server {
+    listen 80;
+    server_name api.example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+```
+
+Then enable it:
+
+```bash
+sudo ln -s /etc/nginx/sites-available/pattiya-backend /etc/nginx/sites-enabled/pattiya-backend
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+Open EC2 security group ports 80 and 443. Only open port 5000 directly for temporary debugging.

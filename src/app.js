@@ -3,6 +3,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const compression = require('compression');
+const config = require('./config');
 
 // Route modules
 const authRoutes = require('./routes/auth');
@@ -14,20 +15,25 @@ const notificationRoutes = require('./routes/notifications');
 const systemRoutes = require('./routes/system');
 
 const { connectMongoDB } = require('./config/mongodb');
-const { initFirebase } = require('./services/fcmService');
-
-try {
-    initFirebase();
-} catch (e) {
-    console.error('Firebase init failed (might already be initialized):', e.message);
-}
 
 const app = express();
 
+if (config.server.trustProxy) {
+    app.set('trust proxy', 1);
+}
+
 // --------------- Global Middleware ---------------
 
+function isOriginAllowed(origin) {
+    if (!origin) return true;
+    if (config.cors.origins.includes('*')) return true;
+    return config.cors.origins.includes(origin);
+}
+
 const corsOptions = {
-    origin: true,
+    origin(origin, callback) {
+        callback(null, isOriginAllowed(origin));
+    },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Gateway-Token'],
     optionsSuccessStatus: 204,
@@ -37,10 +43,9 @@ app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 app.use(helmet());
 app.use(compression());
-app.use(morgan('dev'));
+app.use(morgan(config.server.env === 'production' ? 'combined' : 'dev'));
 app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true }));
-
 
 // --------------- Public Utility Routes ---------------
 
@@ -48,7 +53,8 @@ app.get('/', (_req, res) => {
     res.json({
         status: 'ok',
         service: 'pattiya-backend',
-        health: '/v1/health',
+        health: '/api/v1/health',
+        environment: config.server.env,
     });
 });
 
@@ -106,7 +112,6 @@ app.use((_req, res) => {
 
 // --------------- Global Error Handler ---------------
 
-// eslint-disable-next-line no-unused-vars
 app.use((err, _req, res, _next) => {
     console.error('[Error]', err.stack || err.message);
 
