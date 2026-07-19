@@ -124,3 +124,36 @@ MONGODB_REQUIRED=false
 
 When MongoDB is working, set it back to `true` in production.
 
+
+## Socket.IO Notes
+
+The backend accepts both `/socket.io` and `/api/socket.io` by default. The Flutter app uses `/socket.io` for EC2 hosts unless `SOCKET_IO_PATH` is set in the app environment.
+
+If you see this in backend logs:
+
+```text
+GET /socket.io/?EIO=4&transport=websocket 404
+```
+
+then the request is reaching Express instead of Socket.IO. Check these first:
+
+```bash
+npm run doctor:ec2
+pm2 logs pattiya-backend --lines 100
+curl "http://127.0.0.1:5000/socket.io/?EIO=4&transport=polling"
+curl "http://127.0.0.1:5000/api/socket.io/?EIO=4&transport=polling"
+```
+
+For websocket transport through Nginx, the proxy must use HTTP/1.1 and forward upgrade headers:
+
+```nginx
+proxy_http_version 1.1;
+proxy_set_header Upgrade $http_upgrade;
+proxy_set_header Connection "upgrade";
+```
+
+After changing `.env` or pulling backend code, restart PM2 with:
+
+```bash
+pm2 restart pattiya-backend --update-env
+```

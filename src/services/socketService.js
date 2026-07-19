@@ -4,7 +4,8 @@ const config = require('../config');
 const { connectMongoDB } = require('../config/mongodb');
 const User = require('../models/User');
 
-let io = null;
+let primaryIo = null;
+const socketServers = [];
 
 function farmRoom(farmId) {
     return `farm:${farmId}`;
@@ -16,6 +17,33 @@ function serialize(value) {
         ? value.toObject({ versionKey: false })
         : value;
     return JSON.parse(JSON.stringify(raw));
+}
+
+function normalizeSocketPath(value) {
+    if (!value) return null;
+    let socketPath = String(value).trim();
+    if (!socketPath) return null;
+    if (!socketPath.startsWith('/')) socketPath = `/${socketPath}`;
+    return socketPath.replace(/\/+$/, '') || '/socket.io';
+}
+
+function parseSocketPathList(value) {
+    if (value === undefined) return ['/api/socket.io'];
+    return String(value)
+        .split(',')
+        .map(normalizeSocketPath)
+        .filter(Boolean);
+}
+
+function configuredSocketPaths(options = {}) {
+    const primaryPath = normalizeSocketPath(options.path || process.env.SOCKET_IO_PATH || '/socket.io');
+    const candidates = [
+        primaryPath,
+        '/socket.io',
+        ...parseSocketPathList(process.env.SOCKET_IO_ALIASES),
+    ];
+
+    return [...new Set(candidates.filter(Boolean))];
 }
 
 function isOriginAllowed(origin) {
@@ -35,21 +63,7 @@ function getSocketToken(socket) {
     return Array.isArray(queryToken) ? queryToken[0] : queryToken;
 }
 
-function initSocketServer(server, options = {}) {
-    if (io) return io;
-
-    const socketPath = options.path || process.env.SOCKET_IO_PATH || '/socket.io';
-
-    io = new Server(server, {
-        path: socketPath,
-        cors: {
-            origin(origin, callback) {
-                callback(null, isOriginAllowed(origin));
-            },
-            methods: ['GET', 'POST'],
-        },
-    });
-
+function registerSocketHandlers(io) {
     io.use(async (socket, next) => {
         try {
             const token = getSocketToken(socket);
@@ -57,7 +71,7 @@ function initSocketServer(server, options = {}) {
 
             const decoded = jwt.verify(token, config.jwt.secret);
             await connectMongoDB();
-            if (!decoded.userId || !decoded.farmId) {
+            if (!decoded.userId || !decoded.farmId || decoded.type !== 'user') {
                 return next(new Error('Invalid socket token'));
             }
 
@@ -83,19 +97,47 @@ function initSocketServer(server, options = {}) {
             connected_at: new Date().toISOString(),
         });
     });
+}
 
-    console.log('[Socket.IO] Realtime alert server initialized at ' + socketPath);
+function createSocketServer(server, socketPath) {
+    const io = new Server(server, {
+        path: socketPath,
+        cors: {
+            origin(origin, callback) {
+                callback(null, isOriginAllowed(origin));
+            },
+            methods: ['GET', 'POST'],
+        },
+    });
+
+    registerSocketHandlers(io);
     return io;
 }
 
-function emitToFarm(farmId, eventName, payload) {
-    if (!io || !farmId) return;
+function initSocketServer(server, options = {}) {
+    if (primaryIo) return primaryIo;
 
-    io.to(farmRoom(farmId)).emit(eventName, {
-        farm_id: farmId,
-        emitted_at: new Date().toISOString(),
-        ...payload,
-    });
+    const paths = configuredSocketPaths(options);
+    for (const socketPath of paths) {
+        const io = createSocketServer(server, socketPath);
+        socketServers.push(io);
+        if (!primaryIo) primaryIo = io;
+    }
+
+    console.log('[Socket.IO] Realtime alert server initialized at ' + paths.join(', '));
+    return primaryIo;
+}
+
+function emitToFarm(farmId, eventName, payload) {
+    if (socketServers.length === 0 || !farmId) return;
+
+    for (const io of socketServers) {
+        io.to(farmRoom(farmId)).emit(eventName, {
+            farm_id: farmId,
+            emitted_at: new Date().toISOString(),
+            ...payload,
+        });
+    }
 }
 
 function emitNotificationAlert(action, notification) {
