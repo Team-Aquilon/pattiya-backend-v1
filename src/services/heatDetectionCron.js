@@ -9,7 +9,7 @@ const fcmService = require('./fcmService');
 /**
  * Dual-Validation Heat Detection Algorithm
  * 
- * Runs every 30 minutes. For each active cow with a collar:
+ * Runs every 3 minutes. For each active cow with a collar:
  * 
  * Condition A: high_motion_events in last 4h > 300% of 7-day baseline average
  * Condition B: mic_mood marked as "VOCALIZING" or "RESTLESS" in last 4h
@@ -18,8 +18,8 @@ const fcmService = require('./fcmService');
  */
 
 function startHeatDetectionCron() {
-    // Run every 30 minutes
-    cron.schedule('*/30 * * * *', async () => {
+    // Run every 3 minutes
+    cron.schedule('*/3 * * * *', async () => {
         console.log('[HeatCron] 🔍 Running heat detection analysis...');
 
         try {
@@ -51,7 +51,7 @@ function startHeatDetectionCron() {
         }
     });
 
-    console.log('[HeatCron] ✅ Heat detection cron scheduled (every 30 min)');
+    console.log('[HeatCron] ✅ Heat detection cron scheduled (every 3 min)');
 }
 
 /**

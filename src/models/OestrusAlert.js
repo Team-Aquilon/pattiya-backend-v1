@@ -15,6 +15,12 @@ const oestrusAlertSchema = new mongoose.Schema(
             type: String,
             default: '',
         },
+        mac_address: {
+            type: String,
+            default: '',
+            uppercase: true,
+            trim: true,
+        },
         decision: {
             type: String,
             required: true,

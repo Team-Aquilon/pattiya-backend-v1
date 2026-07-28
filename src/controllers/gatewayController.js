@@ -443,10 +443,16 @@ exports.oestrusFusion = asyncHandler(async (req, res) => {
     const { gateway_id, cow_id, mac_address, decision, sound_label, sound_probability, activity_label, activity_state, temperature_c, humidity_percent, rssi_dbm, snr_db } = req.body;
     
     await influxService.writeOestrusFusion(req.farmId, gateway_id, req.body);
+
+    const cow = mac_address
+        ? await Cow.findOne({ collar_mac: mac_address.toUpperCase(), farm_id: req.farmId })
+        : null;
+    const appCowId = cow ? cow.cow_id : cow_id;
     
     await OestrusAlert.create({
         farm_id: req.farmId,
-        cow_id,
+        cow_id: appCowId,
+        gateway_id,
         mac_address,
         decision,
         sound_label,
@@ -459,7 +465,6 @@ exports.oestrusFusion = asyncHandler(async (req, res) => {
     });
     
     if (decision === 'LIKELY_OESTRUS') {
-        const cow = await Cow.findOne({ collar_mac: mac_address?.toUpperCase(), farm_id: req.farmId });
         if (cow) {
             cow.status = 'HEAT_DETECTED';
             await cow.save();
@@ -494,13 +499,12 @@ exports.oestrusFusion = asyncHandler(async (req, res) => {
             });
         }
     } else if (decision === 'WATCH') {
-        const cow = await Cow.findOne({ collar_mac: mac_address?.toUpperCase(), farm_id: req.farmId });
         await Notification.create({
             farm_id: req.farmId,
-            cow_id: cow ? cow.cow_id : cow_id,
+            cow_id: appCowId,
             type: 'HEAT_DETECTED',
             title: '???? Oestrus Watch',
-            message: `${cow ? cow.name : cow_id} is showing some signs of oestrus. Keep watching.`,
+            message: `${cow ? cow.name : appCowId} is showing some signs of oestrus. Keep watching.`,
             severity: 'MEDIUM',
             data: { decision }
         });

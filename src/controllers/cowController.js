@@ -339,15 +339,40 @@ exports.getCowHistory = asyncHandler(async (req, res) => {
 
 // ─── 2.5 Register New Collar ──────────────────────────────
 
-exports.registerCow = asyncHandler(async (req, res) => {
-    const { cow_name, collar_mac_address, breed, age_months } = req.body;
+function extractCollarIdFromRegistration(body) {
+    const directValue = body.collar_mac_address || body.collar_id || body.qr_code || body.qr_payload;
+    if (!directValue) return '';
 
-    if (!cow_name || !collar_mac_address) {
-        return res.status(400).json({ status: 'error', message: 'cow_name and collar_mac_address are required' });
+    if (typeof directValue === 'object') {
+        return String(directValue.collar_id || directValue.collar_mac_address || directValue.mac_address || '').trim();
+    }
+
+    const text = String(directValue).trim();
+    if (!text) return '';
+
+    try {
+        const parsed = JSON.parse(text);
+        if (parsed && typeof parsed === 'object') {
+            return String(parsed.collar_id || parsed.collar_mac_address || parsed.mac_address || text).trim();
+        }
+    } catch {
+        // Plain QR values like "cow_01" are expected.
+    }
+
+    return text;
+}
+
+exports.registerCow = asyncHandler(async (req, res) => {
+    const { cow_name, breed, age_months } = req.body;
+    const collarMacAddress = extractCollarIdFromRegistration(req.body);
+
+    if (!cow_name || !collarMacAddress) {
+        return res.status(400).json({ status: 'error', message: 'cow_name and collar_mac_address/collar_id are required' });
     }
 
     // Check if MAC is already in use
-    const existing = await Cow.findOne({ collar_mac: collar_mac_address.toUpperCase(), is_active: true });
+    const normalizedCollarId = collarMacAddress.toUpperCase();
+    const existing = await Cow.findOne({ collar_mac: normalizedCollarId, is_active: true });
     if (existing) {
         return res.status(409).json({ status: 'error', message: 'This collar MAC is already registered' });
     }
@@ -359,7 +384,7 @@ exports.registerCow = asyncHandler(async (req, res) => {
         farm_id: req.farmId,
         cow_id: cowId,
         name: cow_name,
-        collar_mac: collar_mac_address.toUpperCase(),
+        collar_mac: normalizedCollarId,
         breed: breed || '',
         dob,
     });
