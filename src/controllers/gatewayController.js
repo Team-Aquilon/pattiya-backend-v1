@@ -114,6 +114,7 @@ exports.batchVitals = asyncHandler(async (req, res) => {
  */
 async function processVitalsBackground(farmId, gatewayId, records) {
     const methaneAlerts = []; // Collect cows exceeding threshold
+    const cowsByCollarMac = new Map();
 
     for (const record of records) {
         const { mac_address, timestamp, vitals, gps } = record;
@@ -138,11 +139,18 @@ async function processVitalsBackground(farmId, gatewayId, records) {
             updateData.last_location = { lat: gps.lat, lng: gps.lng };
         }
 
-        const cow = await Cow.findOneAndUpdate(
-            { collar_mac: mac_address.toUpperCase(), farm_id: farmId },
-            { $set: updateData },
-            { new: true }
-        );
+        const collarMac = (mac_address || '').toUpperCase();
+        const cow = collarMac
+            ? await Cow.findOneAndUpdate(
+                { collar_mac: collarMac, farm_id: farmId },
+                { $set: updateData },
+                { new: true }
+            )
+            : null;
+
+        if (cow) {
+            cowsByCollarMac.set(collarMac, cow);
+        }
 
         // ?????? 2. Methane threshold check ?????????????????????????????????????????????????????????
         if (vitals && vitals.methane_ppm > METHANE_DANGER_THRESHOLD && cow) {
@@ -159,34 +167,38 @@ async function processVitalsBackground(farmId, gatewayId, records) {
         await handleHighMethaneAlert(farmId, alert.cow, alert.methane_ppm, alert.timestamp);
     }
 
-    // ?????? 4. Environment data (DHT22 on the Base Station) ??????????????????
-    //    The gateway sends ambient_temperature and ambient_humidity
-    //    at the batch level (same for all records in the batch).
-    //    We extract from the first record that has vitals.
-    const firstRecord = records.find((r) => r.vitals);
-    if (firstRecord && firstRecord.vitals) {
-        const { temperature, humidity } = firstRecord.vitals;
+    // ?????? 4. Collar environment data (DHT22) ?????????????????????????????????
+    // Keep the measurement and any alert tied to the record's collar.
+    const environmentRecord = records.find((r) => r.vitals
+        && r.vitals.temperature != null
+        && r.vitals.humidity != null);
+    if (environmentRecord && environmentRecord.vitals) {
+        const { temperature, humidity } = environmentRecord.vitals;
         if (temperature != null && humidity != null) {
             const thi = calculateTHI(temperature, humidity);
             const thiClass = classifyTHI(thi);
-            const batchTimestamp = firstRecord.timestamp || new Date().toISOString();
+            const batchTimestamp = environmentRecord.timestamp || new Date().toISOString();
+            const collarMac = (environmentRecord.mac_address || '').toUpperCase();
+            const cow = cowsByCollarMac.get(collarMac) || null;
 
             // Write environment point to InfluxDB
             await influxService.writeEnvironmentData(
-                farmId, gatewayId, temperature, humidity, thi, batchTimestamp
+                farmId, gatewayId, temperature, humidity, thi, batchTimestamp, collarMac
             );
             emitFarmUpdate(farmId, {
                 action: 'updated',
                 source: 'gateway_vitals',
                 entity: 'environment',
                 gateway_id: gatewayId,
+                cow_id: cow ? cow.cow_id : undefined,
             });
 
-            console.log(`[Gateway] 🌡️ Farm ${farmId}: Temp=${temperature}°C, RH=${humidity}%, THI=${thi} (${thiClass.level})`);
+            const targetName = cow ? `${cow.name} (${cow.cow_id})` : `unpaired collar ${collarMac || 'unknown'}`;
+            console.log(`[Gateway] 🌡️ ${targetName}: Temp=${temperature}°C, RH=${humidity}%, THI=${thi} (${thiClass.level})`);
 
             // Alert if THI exceeds threshold
             if (thi > THI_ALERT_THRESHOLD && thiClass.alert) {
-                await handleHeatStressAlert(farmId, temperature, humidity, thi, thiClass);
+                await handleHeatStressAlert(farmId, temperature, humidity, thi, thiClass, cow, collarMac);
             }
         }
     }
@@ -246,7 +258,7 @@ async function handleHighMethaneAlert(farmId, cow, methanePpm, timestamp) {
  *  - Log Notification with THI details
  *  - Fire FCM push advising the farmer to activate cooling
  */
-async function handleHeatStressAlert(farmId, temperature, humidity, thi, thiClass, cow = null) {
+async function handleHeatStressAlert(farmId, temperature, humidity, thi, thiClass, cow = null, collarMac = '') {
     const targetName = cow ? `${cow.name} (${cow.cow_id})` : `Farm ${farmId}`;
     console.log(`[Gateway] 🚨 HEAT STRESS: ${targetName} — THI=${thi} (${thiClass.level})`);
 
@@ -264,6 +276,8 @@ async function handleHeatStressAlert(farmId, temperature, humidity, thi, thiClas
             ambient_temperature: temperature,
             ambient_humidity: humidity,
             stress_level: thiClass.level,
+            cow_id: cow ? cow.cow_id : '',
+            collar_mac: collarMac || (cow ? cow.collar_mac : ''),
         },
     });
 
@@ -275,6 +289,7 @@ async function handleHeatStressAlert(farmId, temperature, humidity, thi, thiClas
             type: 'HEAT_STRESS_WARNING',
             thi: String(thi),
             cow_id: cow ? cow.cow_id : '',
+            collar_mac: collarMac || (cow ? cow.collar_mac : ''),
             stress_level: thiClass.level,
             notification_id: notification._id.toString(),
         },
@@ -393,14 +408,15 @@ exports.environmentReading = asyncHandler(async (req, res) => {
     
     let thi = null;
     let cow = null;
+    const collarMac = (mac_address || '').toUpperCase();
 
-    if (mac_address) {
-        cow = await Cow.findOne({ collar_mac: mac_address.toUpperCase(), farm_id: req.farmId });
+    if (collarMac) {
+        cow = await Cow.findOne({ collar_mac: collarMac, farm_id: req.farmId });
     }
 
     if (valid) {
         thi = calculateTHI(temperature_c, humidity_percent);
-        await influxService.writeEnvironmentData(req.farmId, gateway_id, temperature_c, humidity_percent, thi, timestamp || new Date().toISOString(), mac_address || '');
+        await influxService.writeEnvironmentData(req.farmId, gateway_id, temperature_c, humidity_percent, thi, timestamp || new Date().toISOString(), collarMac);
         emitFarmUpdate(req.farmId, {
             action: 'updated',
             source: 'environment_reading',
@@ -412,7 +428,7 @@ exports.environmentReading = asyncHandler(async (req, res) => {
         if (thi > THI_ALERT_THRESHOLD) {
             const thiClass = classifyTHI(thi);
             if (thiClass && thiClass.alert) {
-                await handleHeatStressAlert(req.farmId, temperature_c, humidity_percent, thi, thiClass, cow);
+                await handleHeatStressAlert(req.farmId, temperature_c, humidity_percent, thi, thiClass, cow, collarMac);
             }
         }
     }

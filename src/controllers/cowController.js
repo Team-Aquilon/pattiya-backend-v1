@@ -248,6 +248,15 @@ exports.getCow = asyncHandler(async (req, res) => {
 
     const activeHeatStateByCow = await getActiveHeatStateByCow(req.farmId);
     const effectiveStatus = effectiveDashboardStatus(cow, activeHeatStateByCow);
+    let environment = null;
+
+    if (cow.collar_mac) {
+        try {
+            environment = await influxService.queryLatestEnvironment(req.farmId, cow.collar_mac);
+        } catch (err) {
+            console.warn(`[Cow] Latest environment query failed for ${cow.cow_id}:`, err.message);
+        }
+    }
 
     res.json({
         id: cow.cow_id,
@@ -260,6 +269,8 @@ exports.getCow = asyncHandler(async (req, res) => {
         collar_mac: cow.collar_mac,
         battery_percentage: cow.battery_percentage,
         battery_status: cow.battery_status,
+        temperature_c: environment ? environment.ambient_temperature : undefined,
+        humidity_percent: environment ? environment.ambient_humidity : undefined,
         oestrus_status: activeHeatStateByCow.get(cow.cow_id) || 'NORMAL',
         has_active_heat_alert: activeHeatStateByCow.has(cow.cow_id),
     });

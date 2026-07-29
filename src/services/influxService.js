@@ -194,14 +194,15 @@ async function writeEnvironmentData(farmId, gatewayId, temperature, humidity, th
  * @param {string} farmId
  * @returns {{ ambient_temperature, ambient_humidity, thi, time } | null}
  */
-async function queryLatestEnvironment(farmId) {
+async function queryLatestEnvironment(farmId, macAddress = '') {
     const queryApi = getQueryApi();
     const bucket = config.influx.bucket;
+    const macFilter = macAddress ? ` and r.mac == "${macAddress}"` : '';
 
     const query = `
     from(bucket: "${bucket}")
       |> range(start: -1h)
-      |> filter(fn: (r) => r._measurement == "environment" and r.farm_id == "${farmId}")
+      |> filter(fn: (r) => r._measurement == "environment" and r.farm_id == "${farmId}"${macFilter})
       |> last()
       |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
   `;
