@@ -42,6 +42,11 @@ const cowSchema = new mongoose.Schema(
             uppercase: true,
             trim: true,
         },
+        rfid_tag: {
+            type: String,
+            default: '',
+            trim: true,
+        },
         status: {
             type: String,
             enum: ['HEALTHY', 'HEAT_DETECTED', 'SICK', 'THEFT_ALERT', 'LOW_BATTERY', 'OFFLINE'],
@@ -118,6 +123,7 @@ cowSchema.post('findOneAndUpdate', function emitRealtimeCowFindOneUpdate(doc) {
 // Indexes for queries
 cowSchema.index({ farm_id: 1, status: 1 });
 cowSchema.index({ farm_id: 1, collar_mac: 1 });
+cowSchema.index({ farm_id: 1, rfid_tag: 1 });
 cowSchema.index({ farm_id: 1, is_active: 1 });
 
 module.exports = mongoose.model('Cow', cowSchema);

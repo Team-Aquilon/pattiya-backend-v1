@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const Cow = require('../models/Cow');
 const HealthEvent = require('../models/HealthEvent');
 const MilkRecord = require('../models/MilkRecord');
+const MethaneSession = require('../models/MethaneSession');
 const Farm = require('../models/Farm');
 const OestrusAlert = require('../models/OestrusAlert');
 const Notification = require('../models/Notification');
@@ -675,6 +676,35 @@ exports.getMethaneHistory = asyncHandler(async (req, res) => {
         );
     } catch (err) {
         console.warn('[MethaneHistory] InfluxDB query failed:', err.message);
+    }
+
+    // Methane Tower sessions are stored in MongoDB, while collar methane
+    // samples are stored in InfluxDB. Use the tower sessions when no collar
+    // series is available so the existing app chart can display them.
+    if (data_points.length === 0) {
+        const rangeMs = {
+            '24hours': 24 * 60 * 60 * 1000,
+            '7days': 7 * 24 * 60 * 60 * 1000,
+            '30days': 30 * 24 * 60 * 60 * 1000,
+        };
+        const since = new Date(Date.now() - (rangeMs[range] || rangeMs['24hours']));
+        const sessions = await MethaneSession.find({
+            farm_id: req.farmId,
+            cow_id: cow.cow_id,
+            $or: [
+                { session_start_time: { $gte: since } },
+                { createdAt: { $gte: since } },
+            ],
+        })
+            .sort({ session_start_time: 1, createdAt: 1 })
+            .lean();
+
+        data_points = sessions
+            .filter((session) => Number.isFinite(session.avg_delta_ch4_ppm))
+            .map((session) => ({
+                time: (session.session_start_time || session.createdAt).toISOString(),
+                value: session.avg_delta_ch4_ppm,
+            }));
     }
 
     // Compute summary stats for the chart header

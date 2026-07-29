@@ -538,41 +538,62 @@ exports.oestrusFusion = asyncHandler(async (req, res) => {
     res.json({ status: 'success', message: 'Fusion decision processed', data: { decision, alert_triggered: decision !== 'NORMAL' } });
 });
 
+async function resolveMethaneCow(farmId, cowId, rfidTag) {
+    const normalizedCowId = String(cowId || '').trim();
+    const normalizedRfidTag = String(rfidTag || '').trim();
+    let cow = null;
+
+    if (normalizedCowId && normalizedCowId !== 'UNKNOWN_COW') {
+        cow = await Cow.findOne({ cow_id: normalizedCowId, farm_id: farmId });
+    }
+    if (!cow && normalizedRfidTag) {
+        cow = await Cow.findOne({ rfid_tag: normalizedRfidTag, farm_id: farmId });
+    }
+
+    return { cow, normalizedRfidTag };
+}
+
 exports.methaneSample = asyncHandler(async (req, res) => {
-    const { gateway_id } = req.body;
-    await influxService.writeMethaneSample(req.farmId, gateway_id, req.body);
+    const { gateway_id, cow_id, rfid_tag } = req.body;
+    const { cow, normalizedRfidTag } = await resolveMethaneCow(req.farmId, cow_id, rfid_tag);
+    const resolvedCowId = cow ? cow.cow_id : cow_id;
+
+    await influxService.writeMethaneSample(req.farmId, gateway_id, {
+        ...req.body,
+        cow_id: resolvedCowId,
+        rfid_tag: normalizedRfidTag,
+    });
     emitFarmUpdate(req.farmId, {
         action: 'updated',
         source: 'methane_sample',
         entity: 'methane',
         gateway_id,
+        cow_id: resolvedCowId,
     });
     res.json({ status: 'success', message: 'Methane sample stored' });
 });
 
 exports.methaneSession = asyncHandler(async (req, res) => {
     const { gateway_id, cow_id, rfid_tag, avg_delta_ch4_ppm, session_start_time } = req.body;
+    const { cow, normalizedRfidTag } = await resolveMethaneCow(req.farmId, cow_id, rfid_tag);
+    const resolvedCowId = cow ? cow.cow_id : cow_id;
     
     await MethaneSession.create({
         farm_id: req.farmId,
-        ...req.body
+        ...req.body,
+        cow_id: resolvedCowId,
+        rfid_tag: normalizedRfidTag,
     });
     emitFarmUpdate(req.farmId, {
         action: 'updated',
         source: 'methane_session',
         entity: 'methane',
         gateway_id,
-        cow_id,
+        cow_id: resolvedCowId,
     });
 
-    if (avg_delta_ch4_ppm > 600) {
-        let cow = null;
-        if (cow_id) cow = await Cow.findOne({ cow_id, farm_id: req.farmId });
-        if (!cow && rfid_tag) cow = await Cow.findOne({ rfid_tag, farm_id: req.farmId });
-        
-        if (cow) {
-            await handleHighMethaneAlert(req.farmId, cow, avg_delta_ch4_ppm, session_start_time || new Date());
-        }
+    if (avg_delta_ch4_ppm > 600 && cow) {
+        await handleHighMethaneAlert(req.farmId, cow, avg_delta_ch4_ppm, session_start_time || new Date());
     }
 
     res.json({ status: 'success', message: 'Methane session stored' });
