@@ -182,7 +182,7 @@ async function processVitalsBackground(farmId, gatewayId, records) {
                 gateway_id: gatewayId,
             });
 
-            console.log(`[Gateway] ???????  Farm ${farmId}: Temp=${temperature}??C, RH=${humidity}%, THI=${thi} (${thiClass.level})`);
+            console.log(`[Gateway] 🌡️ Farm ${farmId}: Temp=${temperature}°C, RH=${humidity}%, THI=${thi} (${thiClass.level})`);
 
             // Alert if THI exceeds threshold
             if (thi > THI_ALERT_THRESHOLD && thiClass.alert) {
@@ -199,7 +199,7 @@ async function processVitalsBackground(farmId, gatewayId, records) {
  *  - Fire FCM push to the farmer
  */
 async function handleHighMethaneAlert(farmId, cow, methanePpm, timestamp) {
-    console.log(`[Gateway] ??????  HIGH METHANE: ${cow.name} (${cow.cow_id}) ??? ${methanePpm} PPM`);
+    console.log(`[Gateway] 💨 HIGH METHANE: ${cow.name} (${cow.cow_id}) — ${methanePpm} PPM`);
 
     // Mark cow as SICK if not already in a higher-priority state
     if (cow.status === 'HEALTHY' || cow.status === 'OFFLINE') {
@@ -222,16 +222,16 @@ async function handleHighMethaneAlert(farmId, cow, methanePpm, timestamp) {
         farm_id: farmId,
         cow_id: cow.cow_id,
         type: 'SYSTEM',
-        title: '?????? High Methane Warning',
-        message: `${cow.name} (${cow.cow_id}) is emitting ${methanePpm} PPM methane ??? possible digestive bloat! Check immediately.`,
+        title: '💨 High Methane Warning',
+        message: `${cow.name} (${cow.cow_id}) is emitting ${methanePpm} PPM methane — possible digestive bloat! Check immediately.`,
         severity: 'HIGH',
         data: { methane_ppm: methanePpm, threshold: METHANE_DANGER_THRESHOLD },
     });
 
     // FCM push notification
     await fcmService.sendToFarm(farmId, {
-        title: `?????? High Methane: ${cow.name}`,
-        body: `${methanePpm} PPM detected ??? possible digestive bloat!`,
+        title: `💨 High Methane: ${cow.name}`,
+        body: `${methanePpm} PPM detected — possible digestive bloat!`,
         data: {
             type: 'HIGH_METHANE_WARNING',
             cow_id: cow.cow_id,
@@ -247,15 +247,15 @@ async function handleHighMethaneAlert(farmId, cow, methanePpm, timestamp) {
  *  - Fire FCM push advising the farmer to activate cooling
  */
 async function handleHeatStressAlert(farmId, temperature, humidity, thi, thiClass) {
-    console.log(`[Gateway] ???? HEAT STRESS: Farm ${farmId} ??? THI=${thi} (${thiClass.level})`);
+    console.log(`[Gateway] 🚨 HEAT STRESS: Farm ${farmId} — THI=${thi} (${thiClass.level})`);
 
     // Log notification (farm-level, no specific cow)
     const notification = await Notification.create({
         farm_id: farmId,
         cow_id: '',
         type: 'SYSTEM',
-        title: `???? Heat Stress Warning: ${thiClass.level}`,
-        message: `THI=${thi} (${temperature}??C / ${humidity}% RH). ${thiClass.description}. Activate fans and sprinklers immediately!`,
+        title: `🚨 Heat Stress Warning: ${thiClass.level}`,
+        message: `THI=${thi} (${temperature}°C / ${humidity}% RH). ${thiClass.description}. Activate fans and sprinklers immediately!`,
         severity: thiClass.level === 'DANGER' ? 'CRITICAL' : 'HIGH',
         data: {
             alert_type: 'FARM_HEAT_STRESS_WARNING',
@@ -268,8 +268,8 @@ async function handleHeatStressAlert(farmId, temperature, humidity, thi, thiClas
 
     // FCM push notification
     await fcmService.sendToFarm(farmId, {
-        title: `???? Heat Stress: THI ${thi}`,
-        body: `${thiClass.description} (${temperature}??C / ${humidity}% RH). Turn on cooling systems!`,
+        title: `🚨 Heat Stress: THI ${thi}`,
+        body: `${thiClass.description} (${temperature}°C / ${humidity}% RH). Turn on cooling systems!`,
         data: {
             type: 'FARM_HEAT_STRESS_WARNING',
             thi: String(thi),
@@ -335,14 +335,14 @@ exports.emergencyAlert = asyncHandler(async (req, res) => {
         farm_id: farmId,
         cow_id: cow ? cow.cow_id : '',
         type: 'GEOFENCE_BREACH',
-        title: '???? Geofence Breach Alert',
+        title: '📍 Geofence Breach Alert',
         message: `${cow ? cow.name : mac_address} has left the farm boundary! Distance: ${trigger_data?.distance_from_center_meters || 'unknown'}m`,
         severity: 'CRITICAL',
         data: { alert_type, trigger_data, gateway_id },
     });
 
     await fcmService.sendToFarm(farmId, {
-        title: '???? Geofence Breach Alert',
+        title: '📍 Geofence Breach Alert',
         body: `${cow ? cow.name : 'A cow'} has breached the farm boundary!`,
         data: { type: 'GEOFENCE_BREACH', cow_id: cow?.cow_id || '', notification_id: notification._id.toString() },
     });
@@ -489,7 +489,7 @@ exports.oestrusFusion = asyncHandler(async (req, res) => {
             });
             
             await fcmService.sendToFarm(req.farmId, {
-                title: '???? Heat Detected',
+                title: '🔥 Heat Detected',
                 body: `${cow.name || cow.cow_id} is likely in oestrus based on multimodal fusion.`,
                 data: {
                     type: 'HEAT_DETECTED',
@@ -503,7 +503,7 @@ exports.oestrusFusion = asyncHandler(async (req, res) => {
             farm_id: req.farmId,
             cow_id: appCowId,
             type: 'HEAT_DETECTED',
-            title: '???? Oestrus Watch',
+            title: '👀 Oestrus Watch',
             message: `${cow ? cow.name : appCowId} is showing some signs of oestrus. Keep watching.`,
             severity: 'MEDIUM',
             data: { decision }
