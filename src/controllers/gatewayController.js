@@ -246,19 +246,20 @@ async function handleHighMethaneAlert(farmId, cow, methanePpm, timestamp) {
  *  - Log Notification with THI details
  *  - Fire FCM push advising the farmer to activate cooling
  */
-async function handleHeatStressAlert(farmId, temperature, humidity, thi, thiClass) {
-    console.log(`[Gateway] 🚨 HEAT STRESS: Farm ${farmId} — THI=${thi} (${thiClass.level})`);
+async function handleHeatStressAlert(farmId, temperature, humidity, thi, thiClass, cow = null) {
+    const targetName = cow ? `${cow.name} (${cow.cow_id})` : `Farm ${farmId}`;
+    console.log(`[Gateway] 🚨 HEAT STRESS: ${targetName} — THI=${thi} (${thiClass.level})`);
 
-    // Log notification (farm-level, no specific cow)
+    // Log notification
     const notification = await Notification.create({
         farm_id: farmId,
-        cow_id: '',
+        cow_id: cow ? cow.cow_id : '',
         type: 'SYSTEM',
         title: `🚨 Heat Stress Warning: ${thiClass.level}`,
         message: `THI=${thi} (${temperature}°C / ${humidity}% RH). ${thiClass.description}. Activate fans and sprinklers immediately!`,
         severity: thiClass.level === 'DANGER' ? 'CRITICAL' : 'HIGH',
         data: {
-            alert_type: 'FARM_HEAT_STRESS_WARNING',
+            alert_type: 'HEAT_STRESS_WARNING',
             thi,
             ambient_temperature: temperature,
             ambient_humidity: humidity,
@@ -268,11 +269,12 @@ async function handleHeatStressAlert(farmId, temperature, humidity, thi, thiClas
 
     // FCM push notification
     await fcmService.sendToFarm(farmId, {
-        title: `🚨 Heat Stress: THI ${thi}`,
+        title: `🚨 Heat Stress: ${cow ? cow.name : 'Farm'} (THI ${thi})`,
         body: `${thiClass.description} (${temperature}°C / ${humidity}% RH). Turn on cooling systems!`,
         data: {
-            type: 'FARM_HEAT_STRESS_WARNING',
+            type: 'HEAT_STRESS_WARNING',
             thi: String(thi),
+            cow_id: cow ? cow.cow_id : '',
             stress_level: thiClass.level,
             notification_id: notification._id.toString(),
         },
@@ -387,23 +389,30 @@ exports.soundPrediction = asyncHandler(async (req, res) => {
 });
 
 exports.environmentReading = asyncHandler(async (req, res) => {
-    const { gateway_id, timestamp, uptime_ms, temperature_c, humidity_percent, valid } = req.body;
+    const { gateway_id, timestamp, uptime_ms, temperature_c, humidity_percent, valid, mac_address } = req.body;
     
     let thi = null;
+    let cow = null;
+
+    if (mac_address) {
+        cow = await Cow.findOne({ collar_mac: mac_address.toUpperCase(), farm_id: req.farmId });
+    }
+
     if (valid) {
         thi = calculateTHI(temperature_c, humidity_percent);
-        await influxService.writeEnvironmentData(req.farmId, gateway_id, temperature_c, humidity_percent, thi, timestamp || new Date().toISOString());
+        await influxService.writeEnvironmentData(req.farmId, gateway_id, temperature_c, humidity_percent, thi, timestamp || new Date().toISOString(), mac_address || '');
         emitFarmUpdate(req.farmId, {
             action: 'updated',
             source: 'environment_reading',
             entity: 'environment',
             gateway_id,
+            cow_id: cow ? cow.cow_id : undefined,
         });
         
         if (thi > THI_ALERT_THRESHOLD) {
             const thiClass = classifyTHI(thi);
             if (thiClass && thiClass.alert) {
-                await handleHeatStressAlert(req.farmId, temperature_c, humidity_percent, thi, thiClass);
+                await handleHeatStressAlert(req.farmId, temperature_c, humidity_percent, thi, thiClass, cow);
             }
         }
     }

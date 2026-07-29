@@ -166,12 +166,13 @@ async function queryLatestVitals(mac) {
  * @param {number} thi           - Pre-computed THI value
  * @param {string} timestamp     - ISO timestamp
  */
-async function writeEnvironmentData(farmId, gatewayId, temperature, humidity, thi, timestamp) {
+async function writeEnvironmentData(farmId, gatewayId, temperature, humidity, thi, timestamp, macAddress = '') {
     const writeApi = getWriteApi();
 
     const point = new Point('environment')
         .tag('farm_id', farmId)
         .tag('gateway', gatewayId)
+        .tag('mac', macAddress)
         .floatField('ambient_temperature', temperature)
         .floatField('ambient_humidity', humidity)
         .floatField('thi', thi)
