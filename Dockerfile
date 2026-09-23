@@ -12,6 +12,5 @@ COPY . .
 # Expose server port
 EXPOSE 5000
 
-# Run node directly (bypasses docker-entrypoint wrapper)
-ENTRYPOINT ["node"]
-CMD ["src/server.js"]
+# Start the server
+CMD ["node", "src/server.js"]
