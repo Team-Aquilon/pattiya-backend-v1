@@ -75,36 +75,45 @@ jobs:
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
         run: |
-          node -e "
-          const fs = require('fs');
-          const cleanKey = (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\r?\n/g, '\\\n');
+          node -e '
+          const fs = require("fs");
+          function clean(val) {
+            let v = (val || "").trim();
+            if ((v.startsWith("\"") && v.endsWith("\"")) || (v.startsWith("\x27") && v.endsWith("\x27"))) {
+              v = v.slice(1, -1);
+            }
+            return v;
+          }
+          let fbKey = clean(process.env.FIREBASE_PRIVATE_KEY);
+          fbKey = fbKey.replace(/\r?\n/g, "\\n");
+
           const env = [
-            'NODE_ENV=production',
-            'PORT=5000',
-            'HOST=0.0.0.0',
-            'TRUST_PROXY=true',
-            'JWT_EXPIRES_IN=15m',
-            'JWT_REFRESH_EXPIRES_IN=7d',
-            'INFLUXDB_REQUIRED=false',
-            'MQTT_ENABLED=false',
-            'HEAT_CRON_ENABLED=true',
-            'CLOUDINARY_FOLDER=pattiya',
-            'MONGODB_URI=' + (process.env.MONGODB_URI || ''),
-            'JWT_SECRET=' + (process.env.JWT_SECRET || ''),
-            'JWT_REFRESH_SECRET=' + (process.env.JWT_REFRESH_SECRET || ''),
-            'INFLUXDB_URL=' + (process.env.INFLUXDB_URL || ''),
-            'INFLUXDB_TOKEN=' + (process.env.INFLUXDB_TOKEN || ''),
-            'INFLUXDB_ORG=' + (process.env.INFLUXDB_ORG || ''),
-            'INFLUXDB_BUCKET=' + (process.env.INFLUXDB_BUCKET || ''),
-            'FIREBASE_PROJECT_ID=' + (process.env.FIREBASE_PROJECT_ID || ''),
-            'FIREBASE_CLIENT_EMAIL=' + (process.env.FIREBASE_CLIENT_EMAIL || ''),
-            'FIREBASE_PRIVATE_KEY=' + cleanKey,
-            'CLOUDINARY_CLOUD_NAME=' + (process.env.CLOUDINARY_CLOUD_NAME || ''),
-            'CLOUDINARY_API_KEY=' + (process.env.CLOUDINARY_API_KEY || ''),
-            'CLOUDINARY_API_SECRET=' + (process.env.CLOUDINARY_API_SECRET || '')
-          ].join('\n');
-          fs.writeFileSync('/tmp/pattiya.env', env + '\n');
-          "
+            "NODE_ENV=production",
+            "PORT=5000",
+            "HOST=0.0.0.0",
+            "TRUST_PROXY=true",
+            "JWT_EXPIRES_IN=15m",
+            "JWT_REFRESH_EXPIRES_IN=7d",
+            "INFLUXDB_REQUIRED=false",
+            "MQTT_ENABLED=false",
+            "HEAT_CRON_ENABLED=true",
+            "CLOUDINARY_FOLDER=pattiya",
+            "MONGODB_URI=" + clean(process.env.MONGODB_URI),
+            "JWT_SECRET=" + clean(process.env.JWT_SECRET),
+            "JWT_REFRESH_SECRET=" + clean(process.env.JWT_REFRESH_SECRET),
+            "INFLUXDB_URL=" + clean(process.env.INFLUXDB_URL),
+            "INFLUXDB_TOKEN=" + clean(process.env.INFLUXDB_TOKEN),
+            "INFLUXDB_ORG=" + clean(process.env.INFLUXDB_ORG),
+            "INFLUXDB_BUCKET=" + clean(process.env.INFLUXDB_BUCKET),
+            "FIREBASE_PROJECT_ID=" + clean(process.env.FIREBASE_PROJECT_ID),
+            "FIREBASE_CLIENT_EMAIL=" + clean(process.env.FIREBASE_CLIENT_EMAIL),
+            "FIREBASE_PRIVATE_KEY=" + fbKey,
+            "CLOUDINARY_CLOUD_NAME=" + clean(process.env.CLOUDINARY_CLOUD_NAME),
+            "CLOUDINARY_API_KEY=" + clean(process.env.CLOUDINARY_API_KEY),
+            "CLOUDINARY_API_SECRET=" + clean(process.env.CLOUDINARY_API_SECRET)
+          ].join("\n");
+          fs.writeFileSync("/tmp/pattiya.env", env + "\n");
+          '
           scp -i ~/.ssh/pattiya-ec2-key.pem /tmp/pattiya.env ubuntu@${{ secrets.EC2_HOST }}:/home/ubuntu/pattiya.env
           rm /tmp/pattiya.env
 
@@ -124,6 +133,9 @@ jobs:
               echo "AWS CLI installed."
             fi
 
+            # Ensure permissions on env file
+            chmod 644 /home/ubuntu/pattiya.env
+
             # Get ECR registry from IAM instance role
             ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
             ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.ap-south-1.amazonaws.com"
@@ -135,23 +147,42 @@ jobs:
             # Pull latest image
             docker pull "$ECR_REGISTRY/pattiya-backend:latest"
 
+            # Pre-flight container test
+            echo "--- Pre-flight Test 1: Node execution ---"
+            docker run --rm "$ECR_REGISTRY/pattiya-backend:latest" node -e "console.log('Node works in container! Version: ' + process.version)"
+
+            echo "--- Pre-flight Test 2: Config loading ---"
+            docker run --rm \
+              -v /home/ubuntu/pattiya.env:/app/.env:ro \
+              --env-file /home/ubuntu/pattiya.env \
+              "$ECR_REGISTRY/pattiya-backend:latest" \
+              node -e "
+                const config = require('./src/config');
+                console.log('MongoDB URI set:', Boolean(config.mongo.uri));
+                console.log('Port:', config.server.port);
+                console.log('Host:', config.server.host);
+                console.log('Environment:', config.server.env);
+              "
+
             # Stop and remove old container
             docker stop pattiya-backend 2>/dev/null || true
             docker rm pattiya-backend 2>/dev/null || true
 
-            # Run new container using env file
+            # Run new container
             docker run -d \
               --name pattiya-backend \
               --restart unless-stopped \
               -p 5000:5000 \
+              -v /home/ubuntu/pattiya.env:/app/.env:ro \
               --env-file /home/ubuntu/pattiya.env \
               "$ECR_REGISTRY/pattiya-backend:latest"
 
             docker image prune -f
-            echo "Waiting 5s to check initial startup..."
+            echo "Waiting 5s for startup..."
             sleep 5
-            docker ps
-            docker logs pattiya-backend --tail 30
+            docker ps -a
+            echo "--- Container startup logs ---"
+            docker logs pattiya-backend --tail 50
             echo "Deploy step complete!"
           ENDSSH
 
