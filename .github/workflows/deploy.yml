@@ -75,31 +75,36 @@ jobs:
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
         run: |
-          cat > /tmp/pattiya.env << EOF
-          NODE_ENV=production
-          PORT=5000
-          HOST=0.0.0.0
-          TRUST_PROXY=true
-          JWT_EXPIRES_IN=15m
-          JWT_REFRESH_EXPIRES_IN=7d
-          INFLUXDB_REQUIRED=true
-          MQTT_ENABLED=false
-          HEAT_CRON_ENABLED=true
-          CLOUDINARY_FOLDER=pattiya
-          MONGODB_URI=${MONGODB_URI}
-          JWT_SECRET=${JWT_SECRET}
-          JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
-          INFLUXDB_URL=${INFLUXDB_URL}
-          INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
-          INFLUXDB_ORG=${INFLUXDB_ORG}
-          INFLUXDB_BUCKET=${INFLUXDB_BUCKET}
-          FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID}
-          FIREBASE_CLIENT_EMAIL=${FIREBASE_CLIENT_EMAIL}
-          FIREBASE_PRIVATE_KEY=${FIREBASE_PRIVATE_KEY}
-          CLOUDINARY_CLOUD_NAME=${CLOUDINARY_CLOUD_NAME}
-          CLOUDINARY_API_KEY=${CLOUDINARY_API_KEY}
-          CLOUDINARY_API_SECRET=${CLOUDINARY_API_SECRET}
-          EOF
+          node -e "
+          const fs = require('fs');
+          const cleanKey = (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\r?\n/g, '\\\n');
+          const env = [
+            'NODE_ENV=production',
+            'PORT=5000',
+            'HOST=0.0.0.0',
+            'TRUST_PROXY=true',
+            'JWT_EXPIRES_IN=15m',
+            'JWT_REFRESH_EXPIRES_IN=7d',
+            'INFLUXDB_REQUIRED=false',
+            'MQTT_ENABLED=false',
+            'HEAT_CRON_ENABLED=true',
+            'CLOUDINARY_FOLDER=pattiya',
+            'MONGODB_URI=' + (process.env.MONGODB_URI || ''),
+            'JWT_SECRET=' + (process.env.JWT_SECRET || ''),
+            'JWT_REFRESH_SECRET=' + (process.env.JWT_REFRESH_SECRET || ''),
+            'INFLUXDB_URL=' + (process.env.INFLUXDB_URL || ''),
+            'INFLUXDB_TOKEN=' + (process.env.INFLUXDB_TOKEN || ''),
+            'INFLUXDB_ORG=' + (process.env.INFLUXDB_ORG || ''),
+            'INFLUXDB_BUCKET=' + (process.env.INFLUXDB_BUCKET || ''),
+            'FIREBASE_PROJECT_ID=' + (process.env.FIREBASE_PROJECT_ID || ''),
+            'FIREBASE_CLIENT_EMAIL=' + (process.env.FIREBASE_CLIENT_EMAIL || ''),
+            'FIREBASE_PRIVATE_KEY=' + cleanKey,
+            'CLOUDINARY_CLOUD_NAME=' + (process.env.CLOUDINARY_CLOUD_NAME || ''),
+            'CLOUDINARY_API_KEY=' + (process.env.CLOUDINARY_API_KEY || ''),
+            'CLOUDINARY_API_SECRET=' + (process.env.CLOUDINARY_API_SECRET || '')
+          ].join('\n');
+          fs.writeFileSync('/tmp/pattiya.env', env + '\n');
+          "
           scp -i ~/.ssh/pattiya-ec2-key.pem /tmp/pattiya.env ubuntu@${{ secrets.EC2_HOST }}:/home/ubuntu/pattiya.env
           rm /tmp/pattiya.env
 
@@ -143,21 +148,30 @@ jobs:
               "$ECR_REGISTRY/pattiya-backend:latest"
 
             docker image prune -f
-            echo "Deploy complete!"
+            echo "Waiting 5s to check initial startup..."
+            sleep 5
+            docker ps
+            docker logs pattiya-backend --tail 30
+            echo "Deploy step complete!"
           ENDSSH
 
       - name: Health Check
         run: |
           ssh -i ~/.ssh/pattiya-ec2-key.pem ubuntu@${{ secrets.EC2_HOST }} << 'ENDSSH'
-            echo "Waiting 60s for container..."
-            sleep 60
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/v1/health || echo "000")
-            if [ "$STATUS" = "200" ]; then
-              echo "Deploy successful! HTTP $STATUS"
-            else
-              echo "Health check failed! HTTP $STATUS"
-              docker ps -a
-              docker logs pattiya-backend --tail 50
-              exit 1
-            fi
+            echo "Checking health endpoint with retry loop..."
+            for i in {1..12}; do
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/v1/health || echo "000")
+              if [ "$STATUS" = "200" ]; then
+                echo "Deploy successful! Health check passed on attempt $i (HTTP 200)"
+                exit 0
+              fi
+              echo "Attempt $i/12: HTTP $STATUS - waiting 5s..."
+              sleep 5
+            done
+            echo "Health check failed after 60 seconds!"
+            echo "--- Container status ---"
+            docker ps -a
+            echo "--- Container logs ---"
+            docker logs pattiya-backend --tail 100
+            exit 1
           ENDSSH
