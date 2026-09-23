@@ -148,12 +148,16 @@ jobs:
 
       - name: Health Check
         run: |
-          echo "Waiting 30s for container to start..."
-          sleep 30
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://${{ secrets.EC2_HOST }}:5000/api/v1/health || echo "000")
-          if [ "$STATUS" = "200" ]; then
-            echo "Deploy successful! Health check passed (HTTP $STATUS)"
-          else
-            echo "Health check failed! HTTP $STATUS"
-            exit 1
-          fi
+          ssh -i ~/.ssh/pattiya-ec2-key.pem ubuntu@${{ secrets.EC2_HOST }} << 'ENDSSH'
+            echo "Waiting 60s for container..."
+            sleep 60
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/v1/health || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "Deploy successful! HTTP $STATUS"
+            else
+              echo "Health check failed! HTTP $STATUS"
+              docker ps -a
+              docker logs pattiya-backend --tail 50
+              exit 1
+            fi
+          ENDSSH
