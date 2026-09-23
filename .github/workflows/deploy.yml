@@ -54,28 +54,42 @@ jobs:
     needs: build-and-push
 
     steps:
-      - name: Deploy to EC2 via SSH
-        uses: appleboy/ssh-action@029f5b4b39b4dc31e3e41ed30f8a8adeb0bad1c8 # v1.0.3
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ubuntu
-          key: ${{ secrets.EC2_SSH_KEY }}
-          timeout: 120s
-          script: |
-            # ── Authenticate Docker with ECR ──
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/pattiya-ec2-key.pem
+          chmod 600 ~/.ssh/pattiya-ec2-key.pem
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to EC2 via SSH
+        env:
+          ECR_REGISTRY: ${{ needs.build-and-push.outputs.image }}
+        run: |
+          ssh -i ~/.ssh/pattiya-ec2-key.pem ubuntu@${{ secrets.EC2_HOST }} << 'ENDSSH'
+            set -e
+
+            # Authenticate Docker with ECR
             aws ecr get-login-password --region ap-south-1 | \
               docker login --username AWS --password-stdin \
               $(aws sts get-caller-identity --query Account --output text).dkr.ecr.ap-south-1.amazonaws.com
 
-            # ── Pull latest image ──
             ECR_REGISTRY=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.ap-south-1.amazonaws.com
+
+            # Pull latest image
             docker pull $ECR_REGISTRY/pattiya-backend:latest
 
-            # ── Stop and remove old container (if exists) ──
+            # Stop and remove old container
             docker stop pattiya-backend 2>/dev/null || true
             docker rm pattiya-backend 2>/dev/null || true
 
-            # ── Run new container ──
+            # Run new container
             docker run -d \
               --name pattiya-backend \
               --restart unless-stopped \
@@ -84,38 +98,55 @@ jobs:
               -e PORT=5000 \
               -e HOST=0.0.0.0 \
               -e TRUST_PROXY=true \
-              -e MONGODB_URI="${{ secrets.MONGODB_URI }}" \
-              -e JWT_SECRET="${{ secrets.JWT_SECRET }}" \
-              -e JWT_REFRESH_SECRET="${{ secrets.JWT_REFRESH_SECRET }}" \
+              -e MONGODB_URI="$MONGODB_URI" \
+              -e JWT_SECRET="$JWT_SECRET" \
+              -e JWT_REFRESH_SECRET="$JWT_REFRESH_SECRET" \
               -e JWT_EXPIRES_IN="15m" \
               -e JWT_REFRESH_EXPIRES_IN="7d" \
-              -e INFLUXDB_URL="${{ secrets.INFLUXDB_URL }}" \
-              -e INFLUXDB_TOKEN="${{ secrets.INFLUXDB_TOKEN }}" \
-              -e INFLUXDB_ORG="${{ secrets.INFLUXDB_ORG }}" \
-              -e INFLUXDB_BUCKET="${{ secrets.INFLUXDB_BUCKET }}" \
+              -e INFLUXDB_URL="$INFLUXDB_URL" \
+              -e INFLUXDB_TOKEN="$INFLUXDB_TOKEN" \
+              -e INFLUXDB_ORG="$INFLUXDB_ORG" \
+              -e INFLUXDB_BUCKET="$INFLUXDB_BUCKET" \
               -e INFLUXDB_REQUIRED=true \
-              -e FIREBASE_PROJECT_ID="${{ secrets.FIREBASE_PROJECT_ID }}" \
-              -e FIREBASE_CLIENT_EMAIL="${{ secrets.FIREBASE_CLIENT_EMAIL }}" \
-              -e FIREBASE_PRIVATE_KEY="${{ secrets.FIREBASE_PRIVATE_KEY }}" \
-              -e CLOUDINARY_CLOUD_NAME="${{ secrets.CLOUDINARY_CLOUD_NAME }}" \
-              -e CLOUDINARY_API_KEY="${{ secrets.CLOUDINARY_API_KEY }}" \
-              -e CLOUDINARY_API_SECRET="${{ secrets.CLOUDINARY_API_SECRET }}" \
+              -e FIREBASE_PROJECT_ID="$FIREBASE_PROJECT_ID" \
+              -e FIREBASE_CLIENT_EMAIL="$FIREBASE_CLIENT_EMAIL" \
+              -e FIREBASE_PRIVATE_KEY="$FIREBASE_PRIVATE_KEY" \
+              -e CLOUDINARY_CLOUD_NAME="$CLOUDINARY_CLOUD_NAME" \
+              -e CLOUDINARY_API_KEY="$CLOUDINARY_API_KEY" \
+              -e CLOUDINARY_API_SECRET="$CLOUDINARY_API_SECRET" \
               -e CLOUDINARY_FOLDER="pattiya" \
               -e MQTT_ENABLED=false \
               -e HEAT_CRON_ENABLED=true \
               $ECR_REGISTRY/pattiya-backend:latest
 
-            # ── Clean up old Docker images ──
+            # Clean up old images
             docker image prune -f
+
+            echo "Deploy complete!"
+          ENDSSH
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          JWT_REFRESH_SECRET: ${{ secrets.JWT_REFRESH_SECRET }}
+          INFLUXDB_URL: ${{ secrets.INFLUXDB_URL }}
+          INFLUXDB_TOKEN: ${{ secrets.INFLUXDB_TOKEN }}
+          INFLUXDB_ORG: ${{ secrets.INFLUXDB_ORG }}
+          INFLUXDB_BUCKET: ${{ secrets.INFLUXDB_BUCKET }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_CLIENT_EMAIL: ${{ secrets.FIREBASE_CLIENT_EMAIL }}
+          FIREBASE_PRIVATE_KEY: ${{ secrets.FIREBASE_PRIVATE_KEY }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
 
       - name: Health Check
         run: |
           echo "Waiting 30s for container to start..."
           sleep 30
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://pattiya-v1-backend.sinethwickramaratna.dev/api/v1/health)
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://${{ secrets.EC2_HOST }}:5000/api/v1/health || echo "000")
           if [ "$STATUS" = "200" ]; then
-            echo "✅ Deploy successful! Health check passed (HTTP $STATUS)"
+            echo "Deploy successful! Health check passed (HTTP $STATUS)"
           else
-            echo "❌ Health check failed! HTTP $STATUS"
+            echo "Health check failed! HTTP $STATUS"
             exit 1
           fi
